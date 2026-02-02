@@ -40,6 +40,11 @@ let g_globalAngle = 0;
 let g_headAngle = 0;  // moves whole head assembly
 let g_earAngle  = 0;  // flaps ears
 let g_tailAngle = 0;  // wags tail
+let g_animOn = false;
+
+let g_headAnimOffset = 0;
+let g_earAnimOffset  = 0;
+let g_tailAnimOffset = 0;
 
 // (Older placeholders kept, but not used for goat)
 let g_yellowAngle = 0;
@@ -138,6 +143,18 @@ function addActionsforHtmlUI() {
       renderAllShapes();
     });
   }
+
+  const animOnBtn = document.getElementById('animOn');
+if (animOnBtn) animOnBtn.onclick = function() { g_animOn = true; };
+
+const animOffBtn = document.getElementById('animOff');
+if (animOffBtn) animOffBtn.onclick = function() {
+  g_animOn = false;
+  g_headAnimOffset = 0;
+  g_earAnimOffset  = 0;
+  g_tailAnimOffset = 0;
+  renderAllShapes();
+};
 }
 
 function main() {
@@ -197,9 +214,26 @@ function convertCoordinatesEventToGL(ev) {
 
 // Update animation angles of everything if currently animated
 function updateAnimationAngles() {
-  if (g_yellowAnimation) {
-    g_yellowAngle = (45 * Math.sin(g_seconds));
+  if (!g_animOn) {
+    g_headAnimOffset = 0;
+    g_earAnimOffset  = 0;
+    g_tailAnimOffset = 0;
+    return;
   }
+
+  // amplitudes (degrees). These do NOT change your slider values; they add on top.
+  const headAmp = 12;
+  const earAmp  = 25;
+  const tailAmp = 30;
+
+  // speeds
+  const headSpeed = 2.0;
+  const earSpeed  = 4.0;
+  const tailSpeed = 5.0;
+
+  g_headAnimOffset = headAmp * Math.sin(headSpeed * g_seconds);
+  g_earAnimOffset  = earAmp  * Math.sin(earSpeed  * g_seconds);
+  g_tailAnimOffset = tailAmp * Math.sin(tailSpeed * g_seconds);
 }
 
 // Helper function to draw a cube
@@ -290,7 +324,7 @@ function renderAllShapes() {
   // Head joint pivot (where head connects to neck)
   let headFrame = new Matrix4(goatBase);
   headFrame.translate(bodyL*0.90, bodyH*0.72, z0_centered(headW));
-  headFrame.rotate(g_headAngle, 0, 0, 1);  // slider: nod head
+  headFrame.rotate(g_headAngle + g_headAnimOffset, 0, 0, 1);  // slider: nod head
   // move from pivot to head cube origin
   headFrame.translate(0.02, -0.08, 0.0);
 
@@ -325,12 +359,12 @@ function renderAllShapes() {
   const eyeCol = [0.0, 0.0, 0.0, 1.0];
   const eyeRadius = 0.05;
 
-  const eyeX_local = headL - 0.02;
-  const eyeY_local = headH * 0.60;
+  const eyeX_local = headL + 0.03;
+  const eyeY_local = headH * 0.75;
 
   // Z positions in head local space: 0..-headW
-  const eyeZLeft_local  = -headW * 0.35;
-  const eyeZRight_local = -headW * 0.75;
+  const eyeZLeft_local  = -headW * 0.10;
+  const eyeZRight_local = -headW * 0.95;
 
   let eyeSphereL = new Matrix4(headFrame);
   eyeSphereL.translate(eyeX_local, eyeY_local, eyeZLeft_local);
@@ -409,7 +443,7 @@ earLeft.translate(earBaseX_local, earBaseY_local, -headW * -0.125);
 earLeft.rotate(earDroop, 0, 0, 1);
 
 // flap OUT/IN around Y axis (slider)
-earLeft.rotate(g_earAngle, 0, 1, 0);
+earLeft.rotate(g_earAngle + g_earAnimOffset, 0, 1, 0);
 
 earLeft.scale(earL, earH, earW);
 drawCubePart(earCol, earLeft);
@@ -422,7 +456,7 @@ earRight.translate(earBaseX_local, earBaseY_local - 0.01, -headW * 1.0);
 earRight.rotate(earDroop, 0, 0, 1);
 
 // mirror flap direction (negative)
-earRight.rotate(-g_earAngle, 0, 1, 0);
+earRight.rotate(-g_earAngle + g_earAnimOffset, 0, 1, 0);
 
 earRight.scale(earL, earH, earW);
 drawCubePart(earCol, earRight);
@@ -460,7 +494,7 @@ const tailZOffset = -.05;
 
 let tailFrame = new Matrix4(goatBase);
 tailFrame.translate(bodyL - 0.70, bodyH * 0.79, z0_centered(tailFlapW) + tailZOffset);
-tailFrame.rotate(g_tailAngle, 0, 0, 1);  // wag
+tailFrame.rotate(g_tailAngle + g_tailAnimOffset, 0, 0, 1);  // wag
 
 let tailFlap = new Matrix4(tailFrame);
 
