@@ -52,6 +52,15 @@ let g_mouseDown = false;
 let g_lastMouseX = 0;
 let g_lastMouseY = 0;
 
+let g_pokeActive = false;
+let g_pokeStartS = 0;
+const g_pokeDurationS = 1.1;
+
+let g_headPokeOffset = 0;
+let g_earPokeOffset  = 0;
+let g_tailPokeOffset = 0;
+let g_wink = 0;
+
 // (Older placeholders kept, but not used for goat)
 let g_yellowAngle = 0;
 let g_magentaAngle = 0;
@@ -164,6 +173,12 @@ if (animOffBtn) animOffBtn.onclick = function() {
 }
 
 function onMouseDown(ev) {
+  if (ev.shiftKey) {
+    triggerPoke();
+    renderAllShapes();
+    return;
+  }
+
   g_mouseDown = true;
   g_lastMouseX = ev.clientX;
   g_lastMouseY = ev.clientY;
@@ -192,6 +207,11 @@ function onMouseMove(ev) {
   g_lastMouseY = ev.clientY;
 
   renderAllShapes();
+}
+
+function triggerPoke() {
+  g_pokeActive = true;
+  g_pokeStartS = g_seconds;   // uses your global time already
 }
 
 
@@ -258,22 +278,39 @@ function updateAnimationAngles() {
     g_headAnimOffset = 0;
     g_earAnimOffset  = 0;
     g_tailAnimOffset = 0;
-    return;
+  } else {
+    const headAmp = 12, earAmp = 25, tailAmp = 30;
+    const headSpeed = 2.0, earSpeed = 4.0, tailSpeed = 5.0;
+
+    g_headAnimOffset = headAmp * Math.sin(headSpeed * g_seconds);
+    g_earAnimOffset  = earAmp  * Math.sin(earSpeed  * g_seconds);
+    g_tailAnimOffset = tailAmp * Math.sin(tailSpeed * g_seconds);
   }
 
-  // amplitudes (degrees). These do NOT change your slider values; they add on top.
-  const headAmp = 12;
-  const earAmp  = 25;
-  const tailAmp = 30;
+  // Poke
+  g_headPokeOffset = 0;
+  g_earPokeOffset  = 0;
+  g_tailPokeOffset = 0;
+  g_wink = 0;
 
-  // speeds
-  const headSpeed = 2.0;
-  const earSpeed  = 4.0;
-  const tailSpeed = 5.0;
+  if (g_pokeActive) {
+    const t = (g_seconds - g_pokeStartS) / g_pokeDurationS; // 0..1
 
-  g_headAnimOffset = headAmp * Math.sin(headSpeed * g_seconds);
-  g_earAnimOffset  = earAmp  * Math.sin(earSpeed  * g_seconds);
-  g_tailAnimOffset = tailAmp * Math.sin(tailSpeed * g_seconds);
+    if (t >= 1) {
+      g_pokeActive = false;
+    } else {
+      
+      const ease = t * t * (3 - 2 * t);
+
+      // Creative poke: startled jerk + ear snap + tail tuck + wink
+      g_headPokeOffset = -35 * Math.sin(Math.PI * ease);
+      g_earPokeOffset  =  35 * Math.sin(2 * Math.PI * ease);
+      g_tailPokeOffset = -45 * Math.sin(Math.PI * ease);
+
+      
+      g_wink = (t < 0.6) ? 1 : 0;
+    }
+  }
 }
 
 // Helper function to draw a cube
@@ -289,7 +326,7 @@ function drawSpherePart(color, mat, latBands = 10, longBands = 10) {
   gl.uniform4f(u_FragColor, color[0], color[1], color[2], color[3]);
   gl.uniformMatrix4fv(u_ModelMatrix, false, mat.elements);
 
-  const r = 0.5; // unit sphere radius (scaled by mat)
+  const r = 0.5; 
 
   for (let lat = 0; lat < latBands; lat++) {
     const theta1 = (lat / latBands) * Math.PI;
@@ -313,7 +350,6 @@ function drawSpherePart(color, mat, latBands = 10, longBands = 10) {
 function renderAllShapes() {
   var startTime = performance.now();
 
-  // Global rotate (camera/scene)
   var globalRotMat = new Matrix4()
   .rotate(g_globalAngle, 0, 1, 0)
   .rotate(g_mouseRotX, 1, 0, 0)
@@ -325,14 +361,14 @@ function renderAllShapes() {
 
   var len = g_shapesList.length;
 
-  // === GOAT COLORS ===
+  // Colors
   const fur     = [0.90, 0.88, 0.82, 1.0];
   const furDark = [0.80, 0.78, 0.72, 1.0];
   const hornCol = [0.55, 0.50, 0.40, 1.0];
   const hoofCol = [0.10, 0.10, 0.10, 1.0];
   const beardCol= [0.20, 0.20, 0.20, 1.0];
 
-  // === GOAT DIMENSIONS ===
+  // Dimensions
   const bodyL = 0.70, bodyH = 0.30, bodyW = 0.35;
   const legW  = 0.10, legH  = 0.35;
   const hoofH = 0.06;
@@ -342,41 +378,39 @@ function renderAllShapes() {
     return (-bodyW/2 + partW/2);
   }
 
-  // Base for goat (DO NOT include globalRotMat here; shader already applies it)
+  // Base for goat
   let goatBase = new Matrix4();
   goatBase.translate(-0.35, -0.55, 0.15);
 
-  // --- Torso ---
+  // Torso
   let torsoMat = new Matrix4(goatBase);
   torsoMat.scale(bodyL, bodyH, bodyW);
   drawCubePart(fur, torsoMat);
 
-  // --- Neck ---
+  // Neck
   const neckL = 0.18, neckH = 0.20, neckW = 0.16;
   let neckMat = new Matrix4(goatBase);
   neckMat.translate(bodyL*0.78, bodyH*0.60, z0_centered(neckW));
   neckMat.scale(neckL, neckH, neckW);
   drawCubePart(furDark, neckMat);
 
-  // ============================================================
-  // HEAD JOINT: everything attached to headFrame follows g_headAngle
-  // ============================================================
-
+ 
+  // HEAD JOINT
+  
   const headL = 0.26, headH = 0.22, headW = 0.22;
 
   // Head joint pivot (where head connects to neck)
   let headFrame = new Matrix4(goatBase);
   headFrame.translate(bodyL*0.90, bodyH*0.72, z0_centered(headW));
-  headFrame.rotate(g_headAngle + g_headAnimOffset, 0, 0, 1);  // slider: nod head
-  // move from pivot to head cube origin
+  headFrame.rotate(g_headAngle + g_headAnimOffset + g_headPokeOffset, 0, 0, 1);  // slider: nod head
   headFrame.translate(0.02, -0.08, 0.0);
 
-  // --- Head cube ---
+  // Head cube
   let headMat = new Matrix4(headFrame);
   headMat.scale(headL, headH, headW);
   drawCubePart(fur, headMat);
 
-  // --- Snout: trapezoid look (wide base -> narrow tip), attached to headFrame ---
+  // Snout
   const snoutBaseL = 0.10, snoutBaseH = 0.12, snoutBaseW = 0.16;
   const snoutTipL  = 0.08, snoutTipH  = 0.10, snoutTipW  = 0.10;
 
@@ -398,14 +432,14 @@ function renderAllShapes() {
   nose.scale(0.04, 0.04, 0.06);
   drawCubePart([0.08, 0.08, 0.08, 1.0], nose);
 
-  // --- Eyes: two small spheres (non-cube primitive), attached to headFrame ---
+  // Eyes
   const eyeCol = [0.0, 0.0, 0.0, 1.0];
   const eyeRadius = 0.05;
 
   const eyeX_local = headL + 0.03;
   const eyeY_local = headH * 0.75;
 
-  // Z positions in head local space: 0..-headW
+  // Z positions
   const eyeZLeft_local  = -headW * 0.10;
   const eyeZRight_local = -headW * 0.95;
 
@@ -419,7 +453,7 @@ function renderAllShapes() {
   eyeSphereR.scale(eyeRadius, eyeRadius, eyeRadius);
   drawSpherePart(eyeCol, eyeSphereR, 10, 10);
 
-  // --- Horns (2 segments), attached to headFrame ---
+  // Horns
   const hornSegL = 0.05, hornSegW = 0.05;
   const hornSegH1 = 0.09;
   const hornSegH2 = 0.07;
@@ -448,7 +482,7 @@ function renderAllShapes() {
   drawCurvedHornLocal(hornZLeft_local);
   drawCurvedHornLocal(hornZRight_local);
 
-  // --- Beard (V-shape), attached to headFrame ---
+  // Beard
   const beardStemL = 0.04, beardStemH = 0.12, beardStemW = 0.04;
   const beardAngle = 25;
 
@@ -468,25 +502,24 @@ function renderAllShapes() {
   beardRmat.scale(beardStemL, beardStemH, beardStemW);
   drawCubePart(beardCol, beardRmat);
 
-  // ============================================================
-  // EAR JOINT (ears flap, but still attached to headFrame)
+  // EAR JOINT
   const earCol = furDark;
 const earL = 0.08, earH = 0.10, earW = 0.04;
 const earBaseX_local = headL * 0.15;
 const earBaseY_local = headH * 0.65;
 
 // how much the ear naturally droops
-const earDroop = -20;     // Z-axis tilt (constant)
+const earDroop = -20;     
 
 // Left ear
 let earLeft = new Matrix4(headFrame);
 earLeft.translate(earBaseX_local, earBaseY_local, -headW * -0.125);
 
-// droop (constant, so it doesn't "slide")
+
 earLeft.rotate(earDroop, 0, 0, 1);
 
 // flap OUT/IN around Y axis (slider)
-earLeft.rotate(g_earAngle + g_earAnimOffset, 0, 1, 0);
+earLeft.rotate(g_earAngle + g_earAnimOffset + g_earPokeOffset, 0, 1, 0);
 
 earLeft.scale(earL, earH, earW);
 drawCubePart(earCol, earLeft);
@@ -499,12 +532,12 @@ earRight.translate(earBaseX_local, earBaseY_local - 0.01, -headW * 1.0);
 earRight.rotate(earDroop, 0, 0, 1);
 
 // mirror flap direction (negative)
-earRight.rotate(-g_earAngle + g_earAnimOffset, 0, 1, 0);
+earRight.rotate(-(g_earAngle + g_earAnimOffset + g_earPokeOffset), 0, 1, 0);
 
 earRight.scale(earL, earH, earW);
 drawCubePart(earCol, earRight);
 
-  // --- Legs (4) ---
+  // Legs
   function drawLeg(x, z) {
     let legMat = new Matrix4(goatBase);
     legMat.translate(x, -legH, z);
@@ -526,10 +559,9 @@ drawCubePart(earCol, earRight);
   drawLeg(xFront, zFar);
   drawLeg(xBack,  zNear);
   drawLeg(xBack,  zFar);
-
-  // ============================================================
-  // TAIL JOINT (wag up/down), attached to torso/goatBase
-  // ============================================================
+  
+  
+// Tail
 const tailFlapL = 0.10;
 const tailFlapH = 0.06;
 const tailFlapW = 0.07;
@@ -537,13 +569,12 @@ const tailZOffset = -.05;
 
 let tailFrame = new Matrix4(goatBase);
 tailFrame.translate(bodyL - 0.70, bodyH * 0.79, z0_centered(tailFlapW) + tailZOffset);
-tailFrame.rotate(g_tailAngle + g_tailAnimOffset, 0, 0, 1);  // wag
+tailFrame.rotate(g_tailAngle + g_tailAnimOffset + g_tailPokeOffset, 0, 0, 1);  // wag
 
 let tailFlap = new Matrix4(tailFrame);
 
 tailFlap.rotate(180, 0, 1, 0);
 
-// your resting tilt
 tailFlap.rotate(-25, 0, 0, 1);
 
 tailFlap.scale(tailFlapL, tailFlapH, tailFlapW);
