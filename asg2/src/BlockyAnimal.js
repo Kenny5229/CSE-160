@@ -46,6 +46,12 @@ let g_headAnimOffset = 0;
 let g_earAnimOffset  = 0;
 let g_tailAnimOffset = 0;
 
+let g_mouseRotX = 0;   // up/down drag
+let g_mouseRotY = 0;   // left/right drag
+let g_mouseDown = false;
+let g_lastMouseX = 0;
+let g_lastMouseY = 0;
+
 // (Older placeholders kept, but not used for goat)
 let g_yellowAngle = 0;
 let g_magentaAngle = 0;
@@ -157,13 +163,47 @@ if (animOffBtn) animOffBtn.onclick = function() {
 };
 }
 
+function onMouseDown(ev) {
+  g_mouseDown = true;
+  g_lastMouseX = ev.clientX;
+  g_lastMouseY = ev.clientY;
+}
+
+function onMouseUp(ev) {
+  g_mouseDown = false;
+}
+
+function onMouseMove(ev) {
+  if (!g_mouseDown) return;
+
+  const dx = ev.clientX - g_lastMouseX;
+  const dy = ev.clientY - g_lastMouseY;
+
+  // sensitivity (degrees per pixel)
+  const s = 0.3;
+
+  g_mouseRotY += dx * s;   // horizontal drag -> y-rotation
+  g_mouseRotX += dy * s;   // vertical drag   -> x-rotation
+
+  // optional clamp so it doesn't flip upside-down
+  g_mouseRotX = Math.max(-89, Math.min(89, g_mouseRotX));
+
+  g_lastMouseX = ev.clientX;
+  g_lastMouseY = ev.clientY;
+
+  renderAllShapes();
+}
+
+
 function main() {
   setUpWebGL();
   connectFunctionsToGLSL();
   addActionsforHtmlUI();
 
-  canvas.onmousedown = click;
-  canvas.onmousemove = function(ev) { if(ev.buttons==1) click(ev); };
+  canvas.onmousedown = onMouseDown;
+  canvas.onmouseup   = onMouseUp;
+  canvas.onmouseleave= onMouseUp;
+  canvas.onmousemove = onMouseMove;
 
   gl.clearColor(0.0, 0.0, 0.0, 1.0);
 
@@ -274,7 +314,10 @@ function renderAllShapes() {
   var startTime = performance.now();
 
   // Global rotate (camera/scene)
-  var globalRotMat = new Matrix4().rotate(g_globalAngle, 0, 1, 0);
+  var globalRotMat = new Matrix4()
+  .rotate(g_globalAngle, 0, 1, 0)
+  .rotate(g_mouseRotX, 1, 0, 0)
+  .rotate(g_mouseRotY, 0, 1, 0);
   gl.uniformMatrix4fv(u_GlobalRotateMatrix, false, globalRotMat.elements);
 
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
