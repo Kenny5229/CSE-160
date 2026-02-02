@@ -32,46 +32,49 @@ let g_SelectedType = POINT;
 let g_SelectedSegments = 10;
 let u_ModelMatrix;
 let u_GlobalRotateMatrix;
+
+// Scene controls
 let g_globalAngle = 0;
+
+// Joint controls (sliders)
+let g_headAngle = 0;  // moves whole head assembly
+let g_earAngle  = 0;  // flaps ears
+let g_tailAngle = 0;  // wags tail
+
+// (Older placeholders kept, but not used for goat)
 let g_yellowAngle = 0;
 let g_magentaAngle = 0;
 let g_yellowAnimation = false;
 
 function setUpWebGL() {
-  // Retrieve <canvas> element
-canvas = document.getElementById('webgl');
+  canvas = document.getElementById('webgl');
 
-  // Get the rendering context for WebGL
-//gl = getWebGLContext(canvas);
-gl = canvas.getContext("webgl", {preserveDrawingBuffer: true});
+  gl = canvas.getContext("webgl", {preserveDrawingBuffer: true});
   if (!gl) {
     console.log('Failed to get the rendering context for WebGL');
     return;
   }
 
-// Enables blending for transparency
-gl.enable(gl.BLEND);
-gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  // Enables blending for transparency
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
-gl.enable(gl.DEPTH_TEST);
-
+  // Depth for 3D
+  gl.enable(gl.DEPTH_TEST);
 }
 
 function connectFunctionsToGLSL() {
-    // Initialize shaders
   if (!initShaders(gl, VSHADER_SOURCE, FSHADER_SOURCE)) {
     console.log('Failed to intialize shaders.');
     return;
   }
 
-  // // Get the storage location of a_Position
   a_Position = gl.getAttribLocation(gl.program, 'a_Position');
   if (a_Position < 0) {
     console.log('Failed to get the storage location of a_Position');
     return;
   }
 
-  // Get the storage location of u_FragColor
   u_FragColor = gl.getUniformLocation(gl.program, 'u_FragColor');
   if (!u_FragColor) {
     console.log('Failed to get the storage location of u_FragColor');
@@ -84,7 +87,6 @@ function connectFunctionsToGLSL() {
     return;
   }
 
-  // Get the storage location of u_ModelMatrix
   u_ModelMatrix = gl.getUniformLocation(gl.program, 'u_ModelMatrix');
   if (!u_ModelMatrix) {
     console.log('Failed to get the storage location of u_ModelMatrix');
@@ -99,48 +101,55 @@ function connectFunctionsToGLSL() {
 
   var identityM = new Matrix4();
   gl.uniformMatrix4fv(u_ModelMatrix, false, identityM.elements);
-
 }
+
 function addActionsforHtmlUI() {
   document.getElementById('green').onclick = function() {g_selectedColor = [0.0, 1.0, 0.0, 1.0];};
   document.getElementById('red').onclick = function() {g_selectedColor = [1.0, 0.0, 0.0, 1.0];};
   document.getElementById('clearButton').onclick = function() {g_shapesList = []; renderAllShapes();};
 
-  //document.getElementById('pointButton').onclick = function() {g_SelectedType = POINT;};
-  //document.getElementById('triangleButton').onclick = function() {g_SelectedType = TRIANGLE;};
-  //document.getElementById('circleButton').onclick = function() {g_SelectedType = CIRCLE;};
-  // document.getElementById('drawPictureButton').onclick = function() {drawMyPicture();};
+  // Global camera angle
+  document.getElementById('angleSlide').addEventListener('mousemove', function() {
+    g_globalAngle = Number(this.value);
+    renderAllShapes();
+  });
 
-  //document.getElementById('redSlider').addEventListener('mouseup', function() {g_selectedColor[0] = this.value/100;});
-  //document.getElementById('greenSlider').addEventListener('mouseup', function() {g_selectedColor[1] = this.value/100;});
-  //document.getElementById('blueSlider').addEventListener('mouseup', function() {g_selectedColor[2] = this.value/100;});
-  //document.getElementById('animationYellowOffButton').onclick = function() {g_yellowAnimation = false;}
-  //document.getElementById('animationYellowOnButton').onclick = function() {g_yellowAnimation = true;}
+  // Joint sliders (make sure these IDs exist in your HTML)
+  const headSlide = document.getElementById('headSlide');
+  if (headSlide) {
+    headSlide.addEventListener('mousemove', function() {
+      g_headAngle = Number(this.value);
+      renderAllShapes();
+    });
+  }
 
-  //document.getElementById('yellowSlide').addEventListener('mousemove', function() {g_yellowAngle = this.value; renderAllShapes();});
-  //document.getElementById('magentaSlide').addEventListener('mousemove', function() {g_magentaAngle = this.value; renderAllShapes();});
-  // document.getElementById('alphaSlider').addEventListener('mouseup', function() {g_selectedColor[3] = this.value/100;});
-  document.getElementById('angleSlide').addEventListener('mousemove', function() {g_globalAngle = this.value; renderAllShapes();});
-  // document.getElementById('sizeSlider').addEventListener('mouseup', function() {g_SelectedSize = this.value;});
-  // document.getElementById('segmentsSlider').addEventListener('mouseup', function() {g_SelectedSegments = this.value;});
+  const earSlide = document.getElementById('earSlide');
+  if (earSlide) {
+    earSlide.addEventListener('mousemove', function() {
+      g_earAngle = Number(this.value);
+      renderAllShapes();
+    });
+  }
+
+  const tailSlide = document.getElementById('tailSlide');
+  if (tailSlide) {
+    tailSlide.addEventListener('mousemove', function() {
+      g_tailAngle = Number(this.value);
+      renderAllShapes();
+    });
+  }
 }
 
 function main() {
+  setUpWebGL();
+  connectFunctionsToGLSL();
+  addActionsforHtmlUI();
 
-    setUpWebGL();
-    connectFunctionsToGLSL();
-    addActionsforHtmlUI();
-
-  // Register function (event handler) to be called on a mouse press
   canvas.onmousedown = click;
   canvas.onmousemove = function(ev) { if(ev.buttons==1) click(ev); };
 
-  // Specify the color for clearing <canvas>
   gl.clearColor(0.0, 0.0, 0.0, 1.0);
 
-  // Clear <canvas>
-  // gl.clear(gl.COLOR_BUFFER_BIT);
-  // renderAllShapes();
   requestAnimationFrame(tick);
 }
 
@@ -148,18 +157,17 @@ var g_startTime = performance.now()/1000.0;
 var g_seconds = performance.now()/1000.0 - g_startTime;
 
 function tick() {
-    g_seconds = performance.now()/1000.0;
-    updateAnimationAngles();
-    renderAllShapes();
-    requestAnimationFrame(tick);
+  g_seconds = performance.now()/1000.0;
+  updateAnimationAngles();
+  renderAllShapes();
+  requestAnimationFrame(tick);
 }
 
 var g_shapesList =[];
 
 function click(ev) {
-
   let [x,y] = convertCoordinatesEventToGL(ev);
-  
+
   let shape;
   if(g_SelectedType == POINT){
     shape = new Point();
@@ -173,28 +181,13 @@ function click(ev) {
   shape.color = g_selectedColor.slice();
   shape.size = g_SelectedSize;
   g_shapesList.push(shape);
-  // Store the coordinates to g_points array
-  //g_points.push([x, y]);
 
-  //g_colors.push(g_selectedColor.slice());
-
-  //g_sizes.push(g_SelectedSize);
-  // Store the coordinates to g_points array
-  //if (x >= 0.0 && y >= 0.0) {      // First quadrant
-  //  g_colors.push([1.0, 0.0, 0.0, 1.0]);  // Red
-  //} else if (x < 0.0 && y < 0.0) { // Third quadrant
-  //  g_colors.push([0.0, 1.0, 0.0, 1.0]);  // Green
-  //} else {                         // Others
-  //  g_colors.push([1.0, 1.0, 1.0, 1.0]);  // White
-  // }
-  
   renderAllShapes();
-  // Clear <canvas>
 }
 
 function convertCoordinatesEventToGL(ev) {
-  var x = ev.clientX; // x coordinate of a mouse pointer
-  var y = ev.clientY; // y coordinate of a mouse pointer
+  var x = ev.clientX;
+  var y = ev.clientY;
   var rect = ev.target.getBoundingClientRect();
 
   x = ((x - rect.left) - canvas.width/2)/(canvas.width/2);
@@ -204,26 +197,25 @@ function convertCoordinatesEventToGL(ev) {
 
 // Update animation angles of everything if currently animated
 function updateAnimationAngles() {
-    if (g_yellowAnimation) {
-        g_yellowAngle = (45 * Math.sin(g_seconds));
-    }
+  if (g_yellowAnimation) {
+    g_yellowAngle = (45 * Math.sin(g_seconds));
+  }
 }
 
 // Helper function to draw a cube
 function drawCubePart(color, mat) {
-    let c = new Cube();
-    c.color = color;
-    c.matrix = mat;
-    c.render();
-  }
+  let c = new Cube();
+  c.color = color;
+  c.matrix = mat;
+  c.render();
+}
 
-  function drawSpherePart(color, mat, latBands = 10, longBands = 10) {
-  // set color + matrix once for the whole sphere
+// Draw a sphere using triangles (lat/long). Uses current shader with u_ModelMatrix + u_FragColor.
+function drawSpherePart(color, mat, latBands = 10, longBands = 10) {
   gl.uniform4f(u_FragColor, color[0], color[1], color[2], color[3]);
   gl.uniformMatrix4fv(u_ModelMatrix, false, mat.elements);
 
-  // Unit sphere centered at origin (radius 0.5). You scale it with 'mat'.
-  const r = 0.5;
+  const r = 0.5; // unit sphere radius (scaled by mat)
 
   for (let lat = 0; lat < latBands; lat++) {
     const theta1 = (lat / latBands) * Math.PI;
@@ -233,39 +225,13 @@ function drawCubePart(color, mat) {
       const phi1 = (lon / longBands) * 2 * Math.PI;
       const phi2 = ((lon + 1) / longBands) * 2 * Math.PI;
 
-      // 4 points of a quad on the sphere surface
-      const p1 = [
-        r * Math.sin(theta1) * Math.cos(phi1),
-        r * Math.cos(theta1),
-        r * Math.sin(theta1) * Math.sin(phi1)
-      ];
-      const p2 = [
-        r * Math.sin(theta2) * Math.cos(phi1),
-        r * Math.cos(theta2),
-        r * Math.sin(theta2) * Math.sin(phi1)
-      ];
-      const p3 = [
-        r * Math.sin(theta2) * Math.cos(phi2),
-        r * Math.cos(theta2),
-        r * Math.sin(theta2) * Math.sin(phi2)
-      ];
-      const p4 = [
-        r * Math.sin(theta1) * Math.cos(phi2),
-        r * Math.cos(theta1),
-        r * Math.sin(theta1) * Math.sin(phi2)
-      ];
+      const p1 = [ r * Math.sin(theta1) * Math.cos(phi1), r * Math.cos(theta1), r * Math.sin(theta1) * Math.sin(phi1) ];
+      const p2 = [ r * Math.sin(theta2) * Math.cos(phi1), r * Math.cos(theta2), r * Math.sin(theta2) * Math.sin(phi1) ];
+      const p3 = [ r * Math.sin(theta2) * Math.cos(phi2), r * Math.cos(theta2), r * Math.sin(theta2) * Math.sin(phi2) ];
+      const p4 = [ r * Math.sin(theta1) * Math.cos(phi2), r * Math.cos(theta1), r * Math.sin(theta1) * Math.sin(phi2) ];
 
-      // two triangles (p1,p2,p3) and (p1,p3,p4)
-      drawTriangle3D([
-        p1[0], p1[1], p1[2],
-        p2[0], p2[1], p2[2],
-        p3[0], p3[1], p3[2]
-      ]);
-      drawTriangle3D([
-        p1[0], p1[1], p1[2],
-        p3[0], p3[1], p3[2],
-        p4[0], p4[1], p4[2]
-      ]);
+      drawTriangle3D([ p1[0], p1[1], p1[2],  p2[0], p2[1], p2[2],  p3[0], p3[1], p3[2] ]);
+      drawTriangle3D([ p1[0], p1[1], p1[2],  p3[0], p3[1], p3[2],  p4[0], p4[1], p4[2] ]);
     }
   }
 }
@@ -273,235 +239,239 @@ function drawCubePart(color, mat) {
 function renderAllShapes() {
   var startTime = performance.now();
 
+  // Global rotate (camera/scene)
   var globalRotMat = new Matrix4().rotate(g_globalAngle, 0, 1, 0);
   gl.uniformMatrix4fv(u_GlobalRotateMatrix, false, globalRotMat.elements);
 
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-  gl.clearDepth(gl.COLOR_BUFFER_BIT); 
+  gl.clearDepth(1.0);
 
-  
   var len = g_shapesList.length;
-  //for(var i = 0; i < len; i++) {
-    // g_shapesList[i].render();
-  //}
 
-  const fur     = [0.90, 0.88, 0.82, 1.0];   // light tan/cream
-  const furDark = [0.80, 0.78, 0.72, 1.0];   // slightly darker
-  const hornCol = [0.55, 0.50, 0.40, 1.0];   // brown/khaki
-  const hoofCol = [0.10, 0.10, 0.10, 1.0];   // black
-  const eyeWhite= [1.00, 1.00, 1.00, 1.0];
-  const eyePupil= [0.00, 0.00, 0.00, 1.0];
+  // === GOAT COLORS ===
+  const fur     = [0.90, 0.88, 0.82, 1.0];
+  const furDark = [0.80, 0.78, 0.72, 1.0];
+  const hornCol = [0.55, 0.50, 0.40, 1.0];
+  const hoofCol = [0.10, 0.10, 0.10, 1.0];
+  const beardCol= [0.20, 0.20, 0.20, 1.0];
 
- const bodyL = 0.70, bodyH = 0.30, bodyW = 0.35; // torso
- const legW  = 0.10, legH  = 0.35;
- const hoofH = 0.06;
+  // === GOAT DIMENSIONS ===
+  const bodyL = 0.70, bodyH = 0.30, bodyW = 0.35;
+  const legW  = 0.10, legH  = 0.35;
+  const hoofH = 0.06;
 
-// Helper: for centered parts along the torso width (z axis)
-function z0_centered(partW) {
-  // cube spans z: [z0, z0 - partW], center is z0 - partW/2
-  // want center at -bodyW/2  => z0 = -bodyW/2 + partW/2
-  return (-bodyW/2 + partW/2);
-}
+  // Center helper along torso width (z axis)
+  function z0_centered(partW) {
+    return (-bodyW/2 + partW/2);
+  }
 
-// A NON-SCALED anchor for the whole goat (build everything off this)
-let goatBase = new Matrix4();
-goatBase.translate(-0.35, -0.55, 0.15);  // same overall placement you had
+  // Base for goat (DO NOT include globalRotMat here; shader already applies it)
+  let goatBase = new Matrix4();
+  goatBase.translate(-0.35, -0.55, 0.15);
 
-// --- Torso ---
-let torsoMat = new Matrix4(goatBase);
-torsoMat.scale(bodyL, bodyH, bodyW);
-drawCubePart(fur, torsoMat);
+  // --- Torso ---
+  let torsoMat = new Matrix4(goatBase);
+  torsoMat.scale(bodyL, bodyH, bodyW);
+  drawCubePart(fur, torsoMat);
 
-// --- Neck (center it in Z) ---
-const neckL = 0.18, neckH = 0.20, neckW = 0.16;
-let neckMat = new Matrix4(goatBase);
-neckMat.translate(bodyL*0.78, bodyH*0.60, z0_centered(neckW));
-neckMat.scale(neckL, neckH, neckW);
-drawCubePart(furDark, neckMat);
+  // --- Neck ---
+  const neckL = 0.18, neckH = 0.20, neckW = 0.16;
+  let neckMat = new Matrix4(goatBase);
+  neckMat.translate(bodyL*0.78, bodyH*0.60, z0_centered(neckW));
+  neckMat.scale(neckL, neckH, neckW);
+  drawCubePart(furDark, neckMat);
 
-// --- Head (center it in Z) ---
-const headL = 0.26, headH = 0.22, headW = 0.22;
-let headMat = new Matrix4(goatBase);
-headMat.translate(bodyL*0.92, bodyH*0.62, z0_centered(headW));
-headMat.scale(headL, headH, headW);
-drawCubePart(fur, headMat);
+  // ============================================================
+  // HEAD JOINT: everything attached to headFrame follows g_headAngle
+  // ============================================================
 
-const headAnchorX = bodyL * 0.92;
-const headAnchorY = bodyH * 0.62;
+  const headL = 0.26, headH = 0.22, headW = 0.22;
 
-// --- Snout (centered, pushed forward) ----
+  // Head joint pivot (where head connects to neck)
+  let headFrame = new Matrix4(goatBase);
+  headFrame.translate(bodyL*0.90, bodyH*0.72, z0_centered(headW));
+  headFrame.rotate(g_headAngle, 0, 0, 1);  // slider: nod head
+  // move from pivot to head cube origin
+  headFrame.translate(0.02, -0.08, 0.0);
 
-const snoutBaseL = 0.10, snoutBaseH = 0.12, snoutBaseW = 0.16;  // near head (wider)
-const snoutTipL  = 0.08, snoutTipH  = 0.10, snoutTipW  = 0.10;  // front (narrower)
+  // --- Head cube ---
+  let headMat = new Matrix4(headFrame);
+  headMat.scale(headL, headH, headW);
+  drawCubePart(fur, headMat);
 
-// Position anchors (use your existing head anchors so it stays centered)
-const snoutX = headAnchorX + headL - 0.01;     // start at head front
-const snoutY = headAnchorY + headH * 0.15;     // a bit lower than centerline
+  // --- Snout: trapezoid look (wide base -> narrow tip), attached to headFrame ---
+  const snoutBaseL = 0.10, snoutBaseH = 0.12, snoutBaseW = 0.16;
+  const snoutTipL  = 0.08, snoutTipH  = 0.10, snoutTipW  = 0.10;
 
-// BASE segment (attached to head)
-let snoutBase = new Matrix4(goatBase);
-snoutBase.translate(snoutX, snoutY, z0_centered(snoutBaseW));
-snoutBase.scale(snoutBaseL, snoutBaseH, snoutBaseW);
-drawCubePart(furDark, snoutBase);
+  const snoutX_local = headL - 0.01;
+  const snoutY_local = headH * 0.15;
 
-// TIP segment (slightly forward, slightly up, narrower)
-let snoutTip = new Matrix4(goatBase);
-snoutTip.translate(snoutX + snoutBaseL * 0.6, snoutY - 0.01, z0_centered(snoutTipW));
-snoutTip.scale(snoutTipL, snoutTipH, snoutTipW);
-drawCubePart(furDark, snoutTip);
+  let snoutBase = new Matrix4(headFrame);
+  snoutBase.translate(snoutX_local, snoutY_local, -headW/2 + snoutBaseW/2);
+  snoutBase.scale(snoutBaseL, snoutBaseH, snoutBaseW);
+  drawCubePart(furDark, snoutBase);
 
-// Optional: nose block (tiny dark cube at very front)
-let nose = new Matrix4(goatBase);
-nose.translate(snoutX + snoutBaseL * 0.85 + snoutTipL * 0.75, snoutY + 0.03, z0_centered(0.06));
-nose.scale(0.04, 0.04, 0.06);
-drawCubePart([0.08, 0.08, 0.08, 1.0], nose);
+  let snoutTip = new Matrix4(headFrame);
+  snoutTip.translate(snoutX_local + snoutBaseL*0.6, snoutY_local - 0.01, -headW/2 + snoutTipW/2);
+  snoutTip.scale(snoutTipL, snoutTipH, snoutTipW);
+  drawCubePart(furDark, snoutTip);
 
-// --- Eyes (tiny cubes on head front-sides) ---
-// --- Eyes: two small spheres (non-cube primitive) ---
-const eyeCol = [0.0, 0.0, 0.0, 1.0];
-const eyeRadius = 0.05; // tweak size
+  let nose = new Matrix4(headFrame);
+  nose.translate(snoutX_local + snoutBaseL*0.85 + snoutTipL*0.75, snoutY_local + 0.03, -headW/2 + 0.06/2);
+  nose.scale(0.04, 0.04, 0.06);
+  drawCubePart([0.08, 0.08, 0.08, 1.0], nose);
 
-const eyeX = headAnchorX + headL - 0.02;
-const eyeY = headAnchorY + headH * 0.60;
-const eyeZLeft  = (-headW * 0.35);
-const eyeZRight = (-headW * 1.25);
+  // --- Eyes: two small spheres (non-cube primitive), attached to headFrame ---
+  const eyeCol = [0.0, 0.0, 0.0, 1.0];
+  const eyeRadius = 0.05;
 
-let eyeSphereL = new Matrix4(goatBase);
-eyeSphereL.translate(eyeX, eyeY, eyeZLeft);
-eyeSphereL.scale(eyeRadius, eyeRadius, eyeRadius);
-drawSpherePart(eyeCol, eyeSphereL, 10, 10);
+  const eyeX_local = headL - 0.02;
+  const eyeY_local = headH * 0.60;
 
-let eyeSphereR = new Matrix4(goatBase);
-eyeSphereR.translate(eyeX, eyeY, eyeZRight);
-eyeSphereR.scale(eyeRadius, eyeRadius, eyeRadius);
-drawSpherePart(eyeCol, eyeSphereR, 10, 10);
+  // Z positions in head local space: 0..-headW
+  const eyeZLeft_local  = -headW * 0.35;
+  const eyeZRight_local = -headW * 0.75;
 
+  let eyeSphereL = new Matrix4(headFrame);
+  eyeSphereL.translate(eyeX_local, eyeY_local, eyeZLeft_local);
+  eyeSphereL.scale(eyeRadius, eyeRadius, eyeRadius);
+  drawSpherePart(eyeCol, eyeSphereL, 10, 10);
 
-// --- Horns (on top of head, centered) ---
-// --- Horns (attached on top of head, symmetric left/right) ---
-// --- Horns (2 segments = curved look) ---
-const hornSegL = 0.05, hornSegW = 0.05;
-const hornSegH1 = 0.09;
-const hornSegH2 = 0.07;
+  let eyeSphereR = new Matrix4(headFrame);
+  eyeSphereR.translate(eyeX_local, eyeY_local, eyeZRight_local);
+  eyeSphereR.scale(eyeRadius, eyeRadius, eyeRadius);
+  drawSpherePart(eyeCol, eyeSphereR, 10, 10);
 
-const hornBaseY = headAnchorY + headH - 0.01;
-const hornBaseX = headAnchorX + headL * 0.35;
-const hornZLeft  = (-headW * 0.5);
-const hornZRight = (-headW * 0.9);
+  // --- Horns (2 segments), attached to headFrame ---
+  const hornSegL = 0.05, hornSegW = 0.05;
+  const hornSegH1 = 0.09;
+  const hornSegH2 = 0.07;
 
-// tweak these two angles
-const hornTilt1 = 18;  // base tilt
-const hornTilt2 = 30;  // tip tilt (more bend)
+  const hornBaseX_local = headL * 0.35;
+  const hornBaseY_local = headH - 0.01;
+  const hornZLeft_local  = -headW * 0.35;
+  const hornZRight_local = -headW * 0.75;
 
-function drawCurvedHorn(zPos) {
-  // base segment
-  let h1 = new Matrix4(goatBase);
-  h1.translate(hornBaseX, hornBaseY, zPos);
-  h1.rotate(hornTilt1, 0, 0, 1);
-  h1.scale(hornSegL, hornSegH1, hornSegW);
-  drawCubePart(hornCol, h1);
+  const hornTilt1 = 18;
+  const hornTilt2 = 30;
 
-  // tip segment (starts near top of base segment)
-  let h2 = new Matrix4(goatBase);
-  h2.translate(hornBaseX + 0.01, hornBaseY + hornSegH1*0.85, zPos);
-  h2.rotate(hornTilt2, 0, 0, 1);
-  h2.scale(hornSegL, hornSegH2, hornSegW);
-  drawCubePart(hornCol, h2);
-}
+  function drawCurvedHornLocal(zPosLocal) {
+    let h1 = new Matrix4(headFrame);
+    h1.translate(hornBaseX_local, hornBaseY_local, zPosLocal);
+    h1.rotate(hornTilt1, 0, 0, 1);
+    h1.scale(hornSegL, hornSegH1, hornSegW);
+    drawCubePart(hornCol, h1);
 
-drawCurvedHorn(hornZLeft);
-drawCurvedHorn(hornZRight);
+    let h2 = new Matrix4(headFrame);
+    h2.translate(hornBaseX_local + 0.01, hornBaseY_local + hornSegH1*0.85, zPosLocal);
+    h2.rotate(hornTilt2, 0, 0, 1);
+    h2.scale(hornSegL, hornSegH2, hornSegW);
+    drawCubePart(hornCol, h2);
+  }
+  drawCurvedHornLocal(hornZLeft_local);
+  drawCurvedHornLocal(hornZRight_local);
 
-// Beard
-const beardCol = [0.20, 0.20, 0.20, 1.0]; // dark beard
-const beardStemL = 0.04;
-const beardStemH = 0.12;
-const beardStemW = 0.04;
+  // --- Beard (V-shape), attached to headFrame ---
+  const beardStemL = 0.04, beardStemH = 0.12, beardStemW = 0.04;
+  const beardAngle = 25;
 
-// Position it under the snout tip
-const beardX = snoutX + snoutBaseL * 0.55;      // near snout tip
-const beardY = snoutY - 0.10;                   // below snout
-const beardZ = z0_centered(0.05);               // centered-ish
+  const beardX_local = snoutX_local + snoutBaseL * 0.55;
+  const beardY_local = snoutY_local - 0.10;
+  const beardZ_local = -headW/2 + 0.05/2;
 
-const beardAngle = 25; // tweak this: 15 (narrow V) to 35 (wide V)
+  let beardLmat = new Matrix4(headFrame);
+  beardLmat.translate(beardX_local, beardY_local, beardZ_local);
+  beardLmat.rotate(beardAngle, 0, 0, 1);
+  beardLmat.scale(beardStemL, beardStemH, beardStemW);
+  drawCubePart(beardCol, beardLmat);
 
-// Left stem (leans left)
-let beardL = new Matrix4(goatBase);
-beardL.translate(beardX, beardY, beardZ);
-beardL.rotate(beardAngle, 0, 0, 1);             // rotate in X-Y plane
-beardL.scale(beardStemL, beardStemH, beardStemW);
-drawCubePart(beardCol, beardL);
+  let beardRmat = new Matrix4(headFrame);
+  beardRmat.translate(beardX_local, beardY_local, beardZ_local);
+  beardRmat.rotate(-beardAngle, 0, 0, 1);
+  beardRmat.scale(beardStemL, beardStemH, beardStemW);
+  drawCubePart(beardCol, beardRmat);
 
-// Right stem (leans right)
-let beardR = new Matrix4(goatBase);
-beardR.translate(beardX, beardY, beardZ);
-beardR.rotate(-beardAngle, 0, 0, 1);
-beardR.scale(beardStemL, beardStemH, beardStemW);
-drawCubePart(beardCol, beardR);
-
-// Ear flaps
-const earCol = furDark;          // or fur if you want lighter ears
+  // ============================================================
+  // EAR JOINT (ears flap, but still attached to headFrame)
+  const earCol = furDark;
 const earL = 0.08, earH = 0.10, earW = 0.04;
+const earBaseX_local = headL * 0.15;
+const earBaseY_local = headH * 0.65;
 
-// Attach near upper-back area of head
-const earBaseX = headAnchorX + headL * 0.15;
-const earBaseY = headAnchorY + headH * 0.65;
+// how much the ear naturally droops
+const earDroop = -20;     // Z-axis tilt (constant)
 
-// Left ear (one side of head)
-let earLeft = new Matrix4(goatBase);
-earLeft.translate(earBaseX, earBaseY, (-headW * 0.15)); // tweak this for left/right
-earLeft.rotate(-20, 0, 0, 1);                            // tilt down/back in X-Y
-earLeft.rotate(-15, 1, 0, 0);                            // angle outward from head
+// Left ear
+let earLeft = new Matrix4(headFrame);
+earLeft.translate(earBaseX_local, earBaseY_local, -headW * -0.125);
+
+// droop (constant, so it doesn't "slide")
+earLeft.rotate(earDroop, 0, 0, 1);
+
+// flap OUT/IN around Y axis (slider)
+earLeft.rotate(g_earAngle, 0, 1, 0);
+
 earLeft.scale(earL, earH, earW);
 drawCubePart(earCol, earLeft);
 
-// Right ear (other side)
-let earRight = new Matrix4(goatBase);
-earRight.translate(earBaseX, earBaseY - 0.01, (-headW * 1.4)); // tweak this for left/right
-earRight.rotate(-20, 0, 0, 1);
-earRight.rotate(15, 1, 0, 0);
+// Right ear (mirror)
+let earRight = new Matrix4(headFrame);
+earRight.translate(earBaseX_local, earBaseY_local - 0.01, -headW * 1.0);
+
+// same droop
+earRight.rotate(earDroop, 0, 0, 1);
+
+// mirror flap direction (negative)
+earRight.rotate(-g_earAngle, 0, 1, 0);
+
 earRight.scale(earL, earH, earW);
 drawCubePart(earCol, earRight);
 
-// --- Legs (4 corners under torso; z uses 0 and -bodyW) ---
-function drawLeg(x, z) {
-  let legMat = new Matrix4(goatBase);
-  legMat.translate(x, -legH, z);   // under body
-  legMat.scale(legW, legH, legW);
-  drawCubePart(furDark, legMat);
+  // --- Legs (4) ---
+  function drawLeg(x, z) {
+    let legMat = new Matrix4(goatBase);
+    legMat.translate(x, -legH, z);
+    legMat.scale(legW, legH, legW);
+    drawCubePart(furDark, legMat);
 
-  let hoofMat = new Matrix4(goatBase);
-  hoofMat.translate(x, -legH - hoofH, z);
-  hoofMat.scale(legW, hoofH, legW);
-  drawCubePart(hoofCol, hoofMat);
-}
+    let hoofMat = new Matrix4(goatBase);
+    hoofMat.translate(x, -legH - hoofH, z);
+    hoofMat.scale(legW, hoofH, legW);
+    drawCubePart(hoofCol, hoofMat);
+  }
 
-// Choose leg placements relative to body size
-const xFront = bodyL*0.12;
-const xBack  = bodyL*0.72;
-const zNear  = -.025;
-const zFar   = -0.225;
+  const xFront = bodyL*0.12;
+  const xBack  = bodyL*0.72;
+  const zNear  = -0.025;
+  const zFar   = -0.225;
 
-drawLeg(xFront, zNear); // front near
-drawLeg(xFront, zFar);  // front far
-drawLeg(xBack,  zNear); // back near
-drawLeg(xBack,  zFar);  // back far
+  drawLeg(xFront, zNear);
+  drawLeg(xFront, zFar);
+  drawLeg(xBack,  zNear);
+  drawLeg(xBack,  zFar);
 
-// --- Tail (stick it OUT the back, centered in Z) ---
-const tailFlapL = 0.10;   // how far it sticks out
-const tailFlapH = 0.06;   // height
-const tailFlapW = 0.07;   // THIN flap
+  // ============================================================
+  // TAIL JOINT (wag up/down), attached to torso/goatBase
+  // ============================================================
+const tailFlapL = 0.10;
+const tailFlapH = 0.06;
+const tailFlapW = 0.07;
+const tailZOffset = -.05; 
 
-let tailFlap = new Matrix4(goatBase);
+let tailFrame = new Matrix4(goatBase);
+tailFrame.translate(bodyL - 0.70, bodyH * 0.79, z0_centered(tailFlapW) + tailZOffset);
+tailFrame.rotate(g_tailAngle, 0, 0, 1);  // wag
 
-// Push it clearly past the back of the torso so it can't blend into it
-tailFlap.translate(bodyL - 0.79, bodyH * 0.85, z0_centered(tailFlapW));
+let tailFlap = new Matrix4(tailFrame);
 
-// Angle it a bit (down/back). Tweak angle if you want more "flap"
+tailFlap.rotate(180, 0, 1, 0);
+
+// your resting tilt
 tailFlap.rotate(-25, 0, 0, 1);
 
 tailFlap.scale(tailFlapL, tailFlapH, tailFlapW);
 drawCubePart(furDark, tailFlap);
+
 
   var duration = performance.now() - startTime;
   sendTextToHTML("numdot: " + len + " ms: " + Math.floor(duration) + " fps: " + Math.floor(10000/duration)/10, "numdot");
@@ -515,3 +485,4 @@ function sendTextToHTML(text, htmlID) {
   }
   htmlElm.innerHTML = text;
 }
+
