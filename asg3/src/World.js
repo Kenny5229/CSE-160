@@ -1,687 +1,441 @@
-// ColoredPoint.js (c) 2012 matsuda
-// Vertex shader program
-var VSHADER_SOURCE =`
-  precision mediump float;
+// World.js
+// Assignment 4: First-person exploration in 32x32x4 voxel world with textures, mouse look, and add/delete blocks.
+
+var VSHADER_SOURCE = `
   attribute vec4 a_Position;
   attribute vec2 a_UV;
-  varying vec2 v_UV;
+
   uniform mat4 u_ModelMatrix;
-  uniform float u_Size;
-  uniform mat4 u_GlobalRotateMatrix;
   uniform mat4 u_ViewMatrix;
   uniform mat4 u_ProjectionMatrix;
-  void main() {
-    gl_Position = u_GlobalRotateMatrix * u_ModelMatrix * a_Position;
-    v_UV = a_UV;
-    gl_PointSize = u_Size;  
-  }`
 
-// Fragment shader program
-var FSHADER_SOURCE =`
-  precision mediump float;
-  uniform vec4 u_FragColor;
-  uniform sampler2D u_Sampler0;
   varying vec2 v_UV;
+
   void main() {
-    gl_FragColor = u_FragColor;
-    gl_FragColor = vec4(v_UV, 0.0, 1.0);
-    gl_FragColor = texture2D(u_Sampler0, v_UV);
-  }`
+    gl_Position = u_ProjectionMatrix * u_ViewMatrix * u_ModelMatrix * a_Position;
+    v_UV = a_UV;
+  }
+`;
 
-let canvas;
-let gl;
-let a_Position;
-let a_UV;
-let u_FragColor;
-let g_selectedColor = [1.0, 0.0, 0.0, 1.0]; 
-let g_SelectedSize = 5.0;
-let u_Size;
-let u_Sampler0;
-const POINT =0;
-const TRIANGLE =1;
-const CIRCLE =2;
-let g_SelectedType = POINT;
-let g_SelectedSegments = 10;
-let u_ModelMatrix;
-let u_GlobalRotateMatrix;
-let u_ViewMatrix;
-let u_ProjectionMatrix;
+var FSHADER_SOURCE = `
+  precision mediump float;
 
-// Scene controls
-let g_globalAngle = 0;
+  varying vec2 v_UV;
 
-// Joint controls (sliders)
-let g_headAngle = 0;  // moves whole head assembly
-let g_earAngle  = 0;  // flaps ears
-let g_tailAngle = 0;  // wags tail
-let g_animOn = false;
+  uniform vec4 u_BaseColor;
+  uniform float u_texColorWeight;   // 0 base only, 1 texture only
 
-let g_headAnimOffset = 0;
-let g_earAnimOffset  = 0;
-let g_tailAnimOffset = 0;
+  uniform int u_whichTexture;        // 0..3
+  uniform sampler2D u_Sampler0;
+  uniform sampler2D u_Sampler1;
+  uniform sampler2D u_Sampler2;
+  uniform sampler2D u_Sampler3;
 
-let g_mouseRotX = 0;   // up/down drag
-let g_mouseRotY = 0;   // left/right drag
-let g_mouseDown = false;
-let g_lastMouseX = 0;
-let g_lastMouseY = 0;
-
-let g_pokeActive = false;
-let g_pokeStartS = 0;
-const g_pokeDurationS = 1.1;
-
-let g_headPokeOffset = 0;
-let g_earPokeOffset  = 0;
-let g_tailPokeOffset = 0;
-let g_wink = 0;
-
-// (Older placeholders kept, but not used for goat)
-let g_yellowAngle = 0;
-let g_magentaAngle = 0;
-let g_yellowAnimation = false;
-
-function setUpWebGL() {
-  canvas = document.getElementById('webgl');
-
-  gl = canvas.getContext("webgl", {preserveDrawingBuffer: true});
-  if (!gl) {
-    console.log('Failed to get the rendering context for WebGL');
-    return;
+  vec4 pickTexture() {
+    if (u_whichTexture == 0) return texture2D(u_Sampler0, v_UV);
+    if (u_whichTexture == 1) return texture2D(u_Sampler1, v_UV);
+    if (u_whichTexture == 2) return texture2D(u_Sampler2, v_UV);
+    return texture2D(u_Sampler3, v_UV);
   }
 
-  // Enables blending for transparency
-  gl.enable(gl.BLEND);
-  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-
-  // Depth for 3D
-  gl.enable(gl.DEPTH_TEST);
-}
-
-function connectFunctionsToGLSL() {
-  if (!initShaders(gl, VSHADER_SOURCE, FSHADER_SOURCE)) {
-    console.log('Failed to intialize shaders.');
-    return;
+  void main() {
+    vec4 texColor = pickTexture();
+    gl_FragColor = (1.0 - u_texColorWeight) * u_BaseColor + u_texColorWeight * texColor;
   }
+`;
 
-  a_Position = gl.getAttribLocation(gl.program, 'a_Position');
-  if (a_Position < 0) {
-    console.log('Failed to get the storage location of a_Position');
-    return;
-  }
+let canvas, gl;
 
-  a_UV = gl.getAttribLocation(gl.program, 'a_UV');
-  if (a_UV < 0) {
-    console.log('Failed to get the storage location of a_UV');
-    return;
-  }
+// attrib/uniform locations
+let a_Position, a_UV;
+let u_ModelMatrix, u_ViewMatrix, u_ProjectionMatrix;
+let u_BaseColor, u_texColorWeight, u_whichTexture;
+let u_Sampler0, u_Sampler1, u_Sampler2, u_Sampler3;
 
-  u_FragColor = gl.getUniformLocation(gl.program, 'u_FragColor');
-  if (!u_FragColor) {
-    console.log('Failed to get the storage location of u_FragColor');
-    return;
-  }
+// camera + input
+let camera;
+let keys = {};
+let mouseDown = false;
+let lastX = 0, lastY = 0;
 
-  u_Size = gl.getUniformLocation(gl.program, 'u_Size');
-  if (!u_Size) {
-    console.log('Failed to get the storage location of u_Size');
-    return;
-  }
+// world
+const WORLD_SIZE = 32;
+const MAX_H = 4;
 
-  u_ModelMatrix = gl.getUniformLocation(gl.program, 'u_ModelMatrix');
-  if (!u_ModelMatrix) {
-    console.log('Failed to get the storage location of u_ModelMatrix');
-    return;
-  }
+let mapH = []; // heights [z][x] 0..4
+let mapT = []; // texture index [z][x] 0..3
 
-  u_GlobalRotateMatrix = gl.getUniformLocation(gl.program, 'u_GlobalRotateMatrix');
-  if(!u_GlobalRotateMatrix) {
-    console.log('Failed to get the storage location of u_GlobalRotateMatrix');
-    return;
-  }
+// textures to load (must exist in same folder)
+const TEX_FILES = ["sky.jpg", "grass.jpg", "brick.jpg", "wood.png"];
 
-  u_ViewMatrix = gl.getUniformLocation(gl.program, 'u_ViewMatrix');
-  if(!u_ViewMatrix) {
-    console.log('Failed to get the storage location of u_ViewMatrix');
-    return;
-  }
+// uniforms/attrs pack for cleaner calls
+let UNIFORMS, ATTRS;
 
-  u_ProjectionMatrix = gl.getUniformLocation(gl.program, 'u_ProjectionMatrix');
-  if(!u_ProjectionMatrix) {
-    console.log('Failed to get the storage location of u_ProjectionMatrix');
-    return;
-  }
 
-  u_Sampler0 = gl.getUniformLocation(gl.program, 'u_Sampler0');
-  if (!u_Sampler0) {
-    console.log('Failed to get the storage location of u_Sampler0');
-    return;
-  }
-
-  var identityM = new Matrix4();
-  gl.uniformMatrix4fv(u_ModelMatrix, false, identityM.elements);
-}
-
-function addActionsforHtmlUI() {
-  document.getElementById('green').onclick = function() {g_selectedColor = [0.0, 1.0, 0.0, 1.0];};
-  document.getElementById('red').onclick = function() {g_selectedColor = [1.0, 0.0, 0.0, 1.0];};
-  document.getElementById('clearButton').onclick = function() {g_shapesList = []; renderAllShapes();};
-
-  // Global camera angle
-  document.getElementById('angleSlide').addEventListener('mousemove', function() {
-    g_globalAngle = Number(this.value);
-    renderAllShapes();
-  });
-
-  // Joint sliders (make sure these IDs exist in your HTML)
-  const headSlide = document.getElementById('headSlide');
-  if (headSlide) {
-    headSlide.addEventListener('mousemove', function() {
-      g_headAngle = Number(this.value);
-      renderAllShapes();
-    });
-  }
-
-  const earSlide = document.getElementById('earSlide');
-  if (earSlide) {
-    earSlide.addEventListener('mousemove', function() {
-      g_earAngle = Number(this.value);
-      renderAllShapes();
-    });
-  }
-
-  const tailSlide = document.getElementById('tailSlide');
-  if (tailSlide) {
-    tailSlide.addEventListener('mousemove', function() {
-      g_tailAngle = Number(this.value);
-      renderAllShapes();
-    });
-  }
-
-  const animOnBtn = document.getElementById('animOn');
-if (animOnBtn) animOnBtn.onclick = function() { g_animOn = true; };
-
-const animOffBtn = document.getElementById('animOff');
-if (animOffBtn) animOffBtn.onclick = function() {
-  g_animOn = false;
-  g_headAnimOffset = 0;
-  g_earAnimOffset  = 0;
-  g_tailAnimOffset = 0;
-  renderAllShapes();
-};
-}
-
-function initTextures(gl, n) {
-  //var texture = gl.createTexture();   // Create a texture object
-  //if (!texture) {
-    //console.log('Failed to create the texture object');
-    //return false;
-  //}
-
-  // Get the storage location of u_Sampler
-  //var u_Sampler0 = gl.getUniformLocation(gl.program, 'u_Sampler0');
-  //if (!u_Sampler0) {
-    //console.log('Failed to get the storage location of u_Sampler0');
-    //return false;
-  //}
-  var image = new Image();  // Create the image object
-  if (!image) {
-    console.log('Failed to create the image object');
-    return false;
-  }
-  // Register the event handler to be called on loading an image
-  image.onload = function(){ sendTextureToGLSL(0, u_Sampler0, image); };
-  // Tell the browser to load an image
-  image.src = 'sky.jpg';
-
-  return true;
-}
-
-function sendTextureToGLSL(n, u_Sampler, image) {
-  var texture = gl.createTexture();   // Create a texture object
-  if (!texture) {
-    console.log('Failed to create the texture object');
-    return false;
-  }
-  
-  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 1); // Flip the image's y axis
-  // Enable texture unit0
-  gl.activeTexture(gl.TEXTURE0);
-  // Bind the texture object to the target
-  gl.bindTexture(gl.TEXTURE_2D, texture);
-
-  // Set the texture parameters
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-  // Set the texture image
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, image);
-
-  // Set the texture unit 0 to the sampler
-  gl.uniform1i(u_Sampler, 0);
-
-  gl.clear(gl.COLOR_BUFFER_BIT);   // Clear <canvas>
-
-  gl.drawArrays(gl.TRIANGLE_STRIP, 0, n); // Draw the rectangle
-}
-
-function onMouseDown(ev) {
-  if (ev.shiftKey) {
-    triggerPoke();
-    renderAllShapes();
-    return;
-  }
-
-  g_mouseDown = true;
-  g_lastMouseX = ev.clientX;
-  g_lastMouseY = ev.clientY;
-}
-
-function onMouseUp(ev) {
-  g_mouseDown = false;
-}
-
-function onMouseMove(ev) {
-  if (!g_mouseDown) return;
-
-  const dx = ev.clientX - g_lastMouseX;
-  const dy = ev.clientY - g_lastMouseY;
-
-  // sensitivity (degrees per pixel)
-  const s = 0.3;
-
-  g_mouseRotY += dx * s;   // horizontal drag -> y-rotation
-  g_mouseRotX += dy * s;   // vertical drag   -> x-rotation
-
-  // optional clamp so it doesn't flip upside-down
-  g_mouseRotX = Math.max(-89, Math.min(89, g_mouseRotX));
-
-  g_lastMouseX = ev.clientX;
-  g_lastMouseY = ev.clientY;
-
-  renderAllShapes();
-}
-
-function triggerPoke() {
-  g_pokeActive = true;
-  g_pokeStartS = g_seconds;   // uses your global time already
-}
-
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
 function main() {
-  setUpWebGL();
-  connectFunctionsToGLSL();
-  addActionsforHtmlUI();
-  initTextures(gl, 0);
-
-  canvas.onmousedown = onMouseDown;
-  canvas.onmouseup   = onMouseUp;
-  canvas.onmouseleave= onMouseUp;
-  canvas.onmousemove = onMouseMove;
-
-  gl.clearColor(0.0, 0.0, 0.0, 1.0);
-
-  requestAnimationFrame(tick);
-}
-
-var g_startTime = performance.now()/1000.0;
-var g_seconds = performance.now()/1000.0 - g_startTime;
-
-function tick() {
-  g_seconds = performance.now()/1000.0;
-  updateAnimationAngles();
-  renderAllShapes();
-  requestAnimationFrame(tick);
-}
-
-var g_shapesList =[];
-
-function click(ev) {
-  let [x,y] = convertCoordinatesEventToGL(ev);
-
-  let shape;
-  if(g_SelectedType == POINT){
-    shape = new Point();
-  } else if(g_SelectedType == TRIANGLE){
-    shape = new Triangle();
-  } else if(g_SelectedType == CIRCLE){
-    shape = new Circle();
-    shape.segments = g_SelectedSegments;
-  }
-  shape.position = [x, y];
-  shape.color = g_selectedColor.slice();
-  shape.size = g_SelectedSize;
-  g_shapesList.push(shape);
-
-  renderAllShapes();
-}
-
-function convertCoordinatesEventToGL(ev) {
-  var x = ev.clientX;
-  var y = ev.clientY;
-  var rect = ev.target.getBoundingClientRect();
-
-  x = ((x - rect.left) - canvas.width/2)/(canvas.width/2);
-  y = (canvas.height/2 - (y - rect.top))/(canvas.height/2);
-  return [x, y];
-}
-
-// Update animation angles of everything if currently animated
-function updateAnimationAngles() {
-  if (!g_animOn) {
-    g_headAnimOffset = 0;
-    g_earAnimOffset  = 0;
-    g_tailAnimOffset = 0;
-  } else {
-    const headAmp = 12, earAmp = 25, tailAmp = 30;
-    const headSpeed = 2.0, earSpeed = 4.0, tailSpeed = 5.0;
-
-    g_headAnimOffset = headAmp * Math.sin(headSpeed * g_seconds);
-    g_earAnimOffset  = earAmp  * Math.sin(earSpeed  * g_seconds);
-    g_tailAnimOffset = tailAmp * Math.sin(tailSpeed * g_seconds);
-  }
-
-  // Poke
-  g_headPokeOffset = 0;
-  g_earPokeOffset  = 0;
-  g_tailPokeOffset = 0;
-  g_wink = 0;
-
-  if (g_pokeActive) {
-    const t = (g_seconds - g_pokeStartS) / g_pokeDurationS; // 0..1
-
-    if (t >= 1) {
-      g_pokeActive = false;
-    } else {
-      
-      const ease = t * t * (3 - 2 * t);
-
-      // Creative poke: startled jerk + ear snap + tail tuck + wink
-      g_headPokeOffset = -35 * Math.sin(Math.PI * ease);
-      g_earPokeOffset  =  35 * Math.sin(2 * Math.PI * ease);
-      g_tailPokeOffset = -45 * Math.sin(Math.PI * ease);
-
-      
-      g_wink = (t < 0.6) ? 1 : 0;
-    }
-  }
-}
-
-// Helper function to draw a cube
-function drawCubePart(color, mat) {
-  let c = new Cube();
-  c.color = color;
-  c.matrix = mat;
-  c.render();
-}
-
-// Draw a sphere using triangles (lat/long). Uses current shader with u_ModelMatrix + u_FragColor.
-function drawSpherePart(color, mat, latBands = 10, longBands = 10) {
-  gl.uniform4f(u_FragColor, color[0], color[1], color[2], color[3]);
-  gl.uniformMatrix4fv(u_ModelMatrix, false, mat.elements);
-
-  const r = 0.5; 
-
-  for (let lat = 0; lat < latBands; lat++) {
-    const theta1 = (lat / latBands) * Math.PI;
-    const theta2 = ((lat + 1) / latBands) * Math.PI;
-
-    for (let lon = 0; lon < longBands; lon++) {
-      const phi1 = (lon / longBands) * 2 * Math.PI;
-      const phi2 = ((lon + 1) / longBands) * 2 * Math.PI;
-
-      const p1 = [ r * Math.sin(theta1) * Math.cos(phi1), r * Math.cos(theta1), r * Math.sin(theta1) * Math.sin(phi1) ];
-      const p2 = [ r * Math.sin(theta2) * Math.cos(phi1), r * Math.cos(theta2), r * Math.sin(theta2) * Math.sin(phi1) ];
-      const p3 = [ r * Math.sin(theta2) * Math.cos(phi2), r * Math.cos(theta2), r * Math.sin(theta2) * Math.sin(phi2) ];
-      const p4 = [ r * Math.sin(theta1) * Math.cos(phi2), r * Math.cos(theta1), r * Math.sin(theta1) * Math.sin(phi2) ];
-
-      drawTriangle3D([ p1[0], p1[1], p1[2],  p2[0], p2[1], p2[2],  p3[0], p3[1], p3[2] ]);
-      drawTriangle3D([ p1[0], p1[1], p1[2],  p3[0], p3[1], p3[2],  p4[0], p4[1], p4[2] ]);
-    }
-  }
-}
-
-function renderAllShapes() {
-  var startTime = performance.now();
-
-  var globalRotMat = new Matrix4()
-  .rotate(g_globalAngle, 0, 1, 0)
-  .rotate(g_mouseRotX, 1, 0, 0)
-  .rotate(g_mouseRotY, 0, 1, 0);
-  gl.uniformMatrix4fv(u_GlobalRotateMatrix, false, globalRotMat.elements);
-
-  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-  gl.clearDepth(1.0);
-
-  var len = g_shapesList.length;
-
-  // Colors
-  const fur     = [0.90, 0.88, 0.82, 1.0];
-  const furDark = [0.80, 0.78, 0.72, 1.0];
-  const hornCol = [0.55, 0.50, 0.40, 1.0];
-  const hoofCol = [0.10, 0.10, 0.10, 1.0];
-  const beardCol= [0.20, 0.20, 0.20, 1.0];
-
-  // Dimensions
-  const bodyL = 0.70, bodyH = 0.30, bodyW = 0.35;
-  const legW  = 0.10, legH  = 0.35;
-  const hoofH = 0.06;
-
-  // Center helper along torso width (z axis)
-  function z0_centered(partW) {
-    return (-bodyW/2 + partW/2);
-  }
-
-  // Base for goat
-  let goatBase = new Matrix4();
-  goatBase.translate(-0.35, -0.55, 0.15);
-
-  // Torso
-  let torsoMat = new Matrix4(goatBase);
-  torsoMat.scale(bodyL, bodyH, bodyW);
-  drawCubePart(fur, torsoMat);
-
-  // Neck
-  const neckL = 0.18, neckH = 0.20, neckW = 0.16;
-  let neckMat = new Matrix4(goatBase);
-  neckMat.translate(bodyL*0.78, bodyH*0.60, z0_centered(neckW));
-  neckMat.scale(neckL, neckH, neckW);
-  drawCubePart(furDark, neckMat);
-
- 
-  // HEAD JOINT
-  
-  const headL = 0.26, headH = 0.22, headW = 0.22;
-
-  // Head joint pivot (where head connects to neck)
-  let headFrame = new Matrix4(goatBase);
-  headFrame.translate(bodyL*0.90, bodyH*0.72, z0_centered(headW));
-  headFrame.rotate(g_headAngle + g_headAnimOffset + g_headPokeOffset, 0, 0, 1);  // slider: nod head
-  headFrame.translate(0.02, -0.08, 0.0);
-
-  // Head cube
-  let headMat = new Matrix4(headFrame);
-  headMat.scale(headL, headH, headW);
-  drawCubePart(fur, headMat);
-
-  // Snout
-  const snoutBaseL = 0.10, snoutBaseH = 0.12, snoutBaseW = 0.16;
-  const snoutTipL  = 0.08, snoutTipH  = 0.10, snoutTipW  = 0.10;
-
-  const snoutX_local = headL - 0.01;
-  const snoutY_local = headH * 0.15;
-
-  let snoutBase = new Matrix4(headFrame);
-  snoutBase.translate(snoutX_local, snoutY_local, -headW/2 + snoutBaseW/2);
-  snoutBase.scale(snoutBaseL, snoutBaseH, snoutBaseW);
-  drawCubePart(furDark, snoutBase);
-
-  let snoutTip = new Matrix4(headFrame);
-  snoutTip.translate(snoutX_local + snoutBaseL*0.6, snoutY_local - 0.01, -headW/2 + snoutTipW/2);
-  snoutTip.scale(snoutTipL, snoutTipH, snoutTipW);
-  drawCubePart(furDark, snoutTip);
-
-  let nose = new Matrix4(headFrame);
-  nose.translate(snoutX_local + snoutBaseL*0.85 + snoutTipL*0.75, snoutY_local + 0.03, -headW/2 + 0.06/2);
-  nose.scale(0.04, 0.04, 0.06);
-  drawCubePart([0.08, 0.08, 0.08, 1.0], nose);
-
-  // Eyes
-  const eyeCol = [0.0, 0.0, 0.0, 1.0];
-  const eyeRadius = 0.05;
-
-  const eyeX_local = headL + 0.03;
-  const eyeY_local = headH * 0.75;
-
-  // Z positions
-  const eyeZLeft_local  = -headW * 0.10;
-  const eyeZRight_local = -headW * 0.95;
-
-  let eyeSphereL = new Matrix4(headFrame);
-  eyeSphereL.translate(eyeX_local, eyeY_local, eyeZLeft_local);
-  eyeSphereL.scale(eyeRadius, eyeRadius, eyeRadius);
-  drawSpherePart(eyeCol, eyeSphereL, 10, 10);
-
-  let eyeSphereR = new Matrix4(headFrame);
-  eyeSphereR.translate(eyeX_local, eyeY_local, eyeZRight_local);
-  eyeSphereR.scale(eyeRadius, eyeRadius, eyeRadius);
-  drawSpherePart(eyeCol, eyeSphereR, 10, 10);
-
-  // Horns
-  const hornSegL = 0.05, hornSegW = 0.05;
-  const hornSegH1 = 0.09;
-  const hornSegH2 = 0.07;
-
-  const hornBaseX_local = headL * 0.35;
-  const hornBaseY_local = headH - 0.01;
-  const hornZLeft_local  = -headW * 0.35;
-  const hornZRight_local = -headW * 0.75;
-
-  const hornTilt1 = 18;
-  const hornTilt2 = 30;
-
-  function drawCurvedHornLocal(zPosLocal) {
-    let h1 = new Matrix4(headFrame);
-    h1.translate(hornBaseX_local, hornBaseY_local, zPosLocal);
-    h1.rotate(hornTilt1, 0, 0, 1);
-    h1.scale(hornSegL, hornSegH1, hornSegW);
-    drawCubePart(hornCol, h1);
-
-    let h2 = new Matrix4(headFrame);
-    h2.translate(hornBaseX_local + 0.01, hornBaseY_local + hornSegH1*0.85, zPosLocal);
-    h2.rotate(hornTilt2, 0, 0, 1);
-    h2.scale(hornSegL, hornSegH2, hornSegW);
-    drawCubePart(hornCol, h2);
-  }
-  drawCurvedHornLocal(hornZLeft_local);
-  drawCurvedHornLocal(hornZRight_local);
-
-  // Beard
-  const beardStemL = 0.04, beardStemH = 0.12, beardStemW = 0.04;
-  const beardAngle = 25;
-
-  const beardX_local = snoutX_local + snoutBaseL * 0.55;
-  const beardY_local = snoutY_local - 0.10;
-  const beardZ_local = -headW/2 + 0.05/2;
-
-  let beardLmat = new Matrix4(headFrame);
-  beardLmat.translate(beardX_local, beardY_local, beardZ_local);
-  beardLmat.rotate(beardAngle, 0, 0, 1);
-  beardLmat.scale(beardStemL, beardStemH, beardStemW);
-  drawCubePart(beardCol, beardLmat);
-
-  let beardRmat = new Matrix4(headFrame);
-  beardRmat.translate(beardX_local, beardY_local, beardZ_local);
-  beardRmat.rotate(-beardAngle, 0, 0, 1);
-  beardRmat.scale(beardStemL, beardStemH, beardStemW);
-  drawCubePart(beardCol, beardRmat);
-
-  // EAR JOINT
-  const earCol = furDark;
-const earL = 0.08, earH = 0.10, earW = 0.04;
-const earBaseX_local = headL * 0.15;
-const earBaseY_local = headH * 0.65;
-
-// how much the ear naturally droops
-const earDroop = -20;     
-
-// Left ear
-let earLeft = new Matrix4(headFrame);
-earLeft.translate(earBaseX_local, earBaseY_local, -headW * -0.125);
-
-
-earLeft.rotate(earDroop, 0, 0, 1);
-
-// flap OUT/IN around Y axis (slider)
-earLeft.rotate(g_earAngle + g_earAnimOffset + g_earPokeOffset, 0, 1, 0);
-
-earLeft.scale(earL, earH, earW);
-drawCubePart(earCol, earLeft);
-
-// Right ear (mirror)
-let earRight = new Matrix4(headFrame);
-earRight.translate(earBaseX_local, earBaseY_local - 0.01, -headW * 1.0);
-
-// same droop
-earRight.rotate(earDroop, 0, 0, 1);
-
-// mirror flap direction (negative)
-earRight.rotate(-(g_earAngle + g_earAnimOffset + g_earPokeOffset), 0, 1, 0);
-
-earRight.scale(earL, earH, earW);
-drawCubePart(earCol, earRight);
-
-  // Legs
-  function drawLeg(x, z) {
-    let legMat = new Matrix4(goatBase);
-    legMat.translate(x, -legH, z);
-    legMat.scale(legW, legH, legW);
-    drawCubePart(furDark, legMat);
-
-    let hoofMat = new Matrix4(goatBase);
-    hoofMat.translate(x, -legH - hoofH, z);
-    hoofMat.scale(legW, hoofH, legW);
-    drawCubePart(hoofCol, hoofMat);
-  }
-
-  const xFront = bodyL*0.12;
-  const xBack  = bodyL*0.72;
-  const zNear  = -0.025;
-  const zFar   = -0.225;
-
-  drawLeg(xFront, zNear);
-  drawLeg(xFront, zFar);
-  drawLeg(xBack,  zNear);
-  drawLeg(xBack,  zFar);
-  
-  
-// Tail
-const tailFlapL = 0.10;
-const tailFlapH = 0.06;
-const tailFlapW = 0.07;
-const tailZOffset = -.05; 
-
-let tailFrame = new Matrix4(goatBase);
-tailFrame.translate(bodyL - 0.70, bodyH * 0.79, z0_centered(tailFlapW) + tailZOffset);
-tailFrame.rotate(g_tailAngle + g_tailAnimOffset + g_tailPokeOffset, 0, 0, 1);  // wag
-
-let tailFlap = new Matrix4(tailFrame);
-
-tailFlap.rotate(180, 0, 1, 0);
-
-tailFlap.rotate(-25, 0, 0, 1);
-
-tailFlap.scale(tailFlapL, tailFlapH, tailFlapW);
-drawCubePart(furDark, tailFlap);
-
-
-  var duration = performance.now() - startTime;
-  sendTextToHTML("numdot: " + len + " ms: " + Math.floor(duration) + " fps: " + Math.floor(10000/duration)/10, "numdot");
-}
-
-function sendTextToHTML(text, htmlID) {
-  var htmlElm = document.getElementById(htmlID);
-  if(!htmlElm) {
-    console.log("Failed to get " + htmlID + " from HTML");
+  canvas = document.getElementById("webgl");
+  gl = canvas.getContext("webgl", { preserveDrawingBuffer: true });
+  if (!gl) {
+    console.log("WebGL not supported");
     return;
   }
-  htmlElm.innerHTML = text;
+  gl.enable(gl.DEPTH_TEST);
+
+  if (!initShaders(gl, VSHADER_SOURCE, FSHADER_SOURCE)) {
+    console.log("Shader init failed");
+    return;
+  }
+
+  // locations
+  a_Position = gl.getAttribLocation(gl.program, "a_Position");
+  a_UV       = gl.getAttribLocation(gl.program, "a_UV");
+
+  u_ModelMatrix      = gl.getUniformLocation(gl.program, "u_ModelMatrix");
+  u_ViewMatrix       = gl.getUniformLocation(gl.program, "u_ViewMatrix");
+  u_ProjectionMatrix = gl.getUniformLocation(gl.program, "u_ProjectionMatrix");
+
+  u_BaseColor       = gl.getUniformLocation(gl.program, "u_BaseColor");
+  u_texColorWeight  = gl.getUniformLocation(gl.program, "u_texColorWeight");
+  u_whichTexture    = gl.getUniformLocation(gl.program, "u_whichTexture");
+
+  u_Sampler0 = gl.getUniformLocation(gl.program, "u_Sampler0");
+  u_Sampler1 = gl.getUniformLocation(gl.program, "u_Sampler1");
+  u_Sampler2 = gl.getUniformLocation(gl.program, "u_Sampler2");
+  u_Sampler3 = gl.getUniformLocation(gl.program, "u_Sampler3");
+
+  UNIFORMS = {
+    u_ModelMatrix, u_ViewMatrix, u_ProjectionMatrix,
+    u_BaseColor, u_texColorWeight, u_whichTexture
+  };
+  ATTRS = { a_Position, a_UV };
+
+  // cube buffers
+  initCubeBuffers(gl, a_Position, a_UV);
+
+  // camera
+  camera = new Camera(canvas);
+  gl.uniformMatrix4fv(u_ProjectionMatrix, false, camera.projectionMatrix.elements);
+
+  // world maps
+  makeMaps();
+
+  // input
+  initInput();
+
+  // texture load then start loop
+  initTextures(() => {
+    gl.clearColor(0.6, 0.8, 1.0, 1.0);
+    requestAnimationFrame(tick);
+  });
 }
 
+function tick() {
+  handleMovement();
+  render();
+  requestAnimationFrame(tick);
+}
+
+
+function makeMaps() {
+  for (let z = 0; z < WORLD_SIZE; z++) {
+    mapH[z] = [];
+    mapT[z] = [];
+    for (let x = 0; x < WORLD_SIZE; x++) {
+      const border = (x === 0 || z === 0 || x === WORLD_SIZE - 1 || z === WORLD_SIZE - 1);
+
+      // base: empty interior, tall border walls
+      let h = border ? 3 : 0;
+
+      // internal maze-ish features
+      if (x === 8 && z > 6 && z < 26) h = 2;
+      if (z === 20 && x > 10 && x < 28) h = 1;
+      if (x > 14 && x < 18 && z > 14 && z < 18) h = 4; // tower
+
+      mapH[z][x] = clamp(h, 0, MAX_H);
+
+      // choose texture per cell
+      let t = 2; // default: brick
+      if (h === 0) t = 2;
+      if (border) t = 2;
+      if (h === 1) t = 3; // wood
+      if (h === 4) t = 2; // brick
+      mapT[z][x] = clamp(t, 0, 3);
+    }
+  }
+}
+
+
+function initInput() {
+  document.addEventListener("keydown", (e) => {
+    keys[e.key.toLowerCase()] = true;
+
+    // Minecraft actions
+    if (e.key.toLowerCase() === "f") addBlockInFront();
+  });
+
+  document.addEventListener("keyup", (e) => {
+    keys[e.key.toLowerCase()] = false;
+  });
+
+  canvas.addEventListener("mousedown", (e) => {
+    mouseDown = true;
+    lastX = e.clientX;
+    lastY = e.clientY;
+  });
+
+  document.addEventListener("mouseup", () => {
+    mouseDown = false;
+  });
+
+  document.addEventListener("mousemove", (e) => {
+    if (!mouseDown) return;
+    const dx = e.clientX - lastX;
+    const dy = e.clientY - lastY;
+    lastX = e.clientX;
+    lastY = e.clientY;
+    camera.look(dx, dy);
+  });
+
+  // Right click removes block
+  document.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    removeBlockInFront();
+  });
+}
+
+function handleMovement() {
+  if (keys["w"]) camera.moveForward();
+  if (keys["s"]) camera.moveBackwards();
+  if (keys["a"]) camera.moveLeft();
+  if (keys["d"]) camera.moveRight();
+  if (keys["q"]) camera.panLeft(3);
+  if (keys["e"]) camera.panRight(3);
+}
+
+
+function initTextures(onDone) {
+  let loaded = 0;
+
+  function loadOne(texUnit, samplerUniform, src) {
+    const tex = gl.createTexture();
+    const img = new Image();
+
+    img.onload = () => {
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 1);
+
+      gl.activeTexture(texUnit);
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      //gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+      //gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+
+      // sampler = texture unit index
+      gl.uniform1i(samplerUniform, texUnit - gl.TEXTURE0);
+
+      loaded++;
+      if (loaded === TEX_FILES.length) onDone();
+    };
+
+    img.onerror = () => {
+      console.log("Failed to load texture:", src);
+    };
+
+    img.src = src;
+  }
+
+  loadOne(gl.TEXTURE0, u_Sampler0, TEX_FILES[0]); // sky
+  loadOne(gl.TEXTURE1, u_Sampler1, TEX_FILES[1]); // grass
+  loadOne(gl.TEXTURE2, u_Sampler2, TEX_FILES[2]); // brick
+  loadOne(gl.TEXTURE3, u_Sampler3, TEX_FILES[3]); // wood
+}
+
+
+function cellInFront(dist = 1.2) {
+  const f = camera.forwardDir();
+  const ex = camera.eye.elements[0];
+  const ez = camera.eye.elements[2];
+
+  const tx = Math.floor(ex + f.elements[0] * dist);
+  const tz = Math.floor(ez + f.elements[2] * dist);
+
+  return {
+    x: clamp(tx, 0, WORLD_SIZE - 1),
+    z: clamp(tz, 0, WORLD_SIZE - 1)
+  };
+}
+
+function addBlockInFront() {
+  const { x, z } = cellInFront();
+  mapH[z][x] = clamp(mapH[z][x] + 1, 0, MAX_H);
+  mapT[z][x] = 3; // placed blocks use wood 
+}
+
+function removeBlockInFront() {
+  const { x, z } = cellInFront();
+  mapH[z][x] = clamp(mapH[z][x] - 1, 0, MAX_H);
+}
+
+
+function render() {
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+  gl.uniformMatrix4fv(u_ViewMatrix, false, camera.viewMatrix.elements);
+
+  drawSkybox();
+  drawGround();
+  drawWalls();
+  drawAnimal();
+}
+
+function drawGround() {
+  const g = new Cube();
+  g.texWeight = 1.0;
+  g.whichTexture = 1; // grass
+  g.baseColor = [1, 1, 1, 1];
+
+  g.matrix.setIdentity();
+  // Move cube so it covers (0..WORLD_SIZE) and sits at y=0
+  g.matrix.translate(0, 0, 30);
+  g.matrix.scale(WORLD_SIZE, 0.1, WORLD_SIZE);
+
+  g.render(gl, UNIFORMS, ATTRS);
+}
+
+function drawSkybox() {
+  const s = new Cube();
+  s.texWeight = 0.0; // base only
+  s.baseColor = [0.5, 0.7, 1.0, 1.0];
+
+
+  const big = 200;
+  s.matrix.setIdentity();
+  // Center it around world
+  s.matrix.translate(-big / 2 + WORLD_SIZE / 2, -big / 2 + 20, -big / 2 + WORLD_SIZE / 2);
+  s.matrix.scale(big, big, big);
+
+  s.render(gl, UNIFORMS, ATTRS);
+}
+
+function drawWalls() {
+  for (let z = 0; z < WORLD_SIZE; z++) {
+    for (let x = 0; x < WORLD_SIZE; x++) {
+      const h = mapH[z][x];
+      if (h <= 0) continue;
+
+      for (let y = 0; y < h; y++) {
+        const w = new Cube();
+        w.texWeight = 1.0;
+        w.whichTexture = mapT[z][x]; // 0..3
+        w.baseColor = [1, 1, 1, 1];
+
+        w.matrix.setIdentity();
+        w.matrix.translate(x, y, z);
+
+        w.render(gl, UNIFORMS, ATTRS);
+      }
+    }
+  }
+}
+
+// Animal in the world (simple blocky creature) 
+
+function drawAnimal() {
+  // Blocky penguin (simple cubes)
+  const baseX = 12;
+  const baseZ = 12 + 1; 
+
+  // Body (black)
+  const body = new Cube();
+  body.texWeight = 0.0;
+  body.baseColor = [0.08, 0.08, 0.10, 1.0];
+  body.matrix.setIdentity();
+  body.matrix.translate(baseX + 0.25, 0.0, baseZ + 0.25);
+  body.matrix.scale(0.9, 1.1, 0.7);
+  body.render(gl, UNIFORMS, ATTRS);
+
+  // Belly (white)
+  const belly = new Cube();
+  belly.texWeight = 0.0;
+  belly.baseColor = [0.92, 0.92, 0.95, 1.0];
+  belly.matrix.setIdentity();
+  belly.matrix.translate(baseX + 0.42, 0.25, baseZ + 0.30);
+  belly.matrix.scale(0.56, 0.70, 0.52);
+  belly.render(gl, UNIFORMS, ATTRS);
+
+  // Head (black)
+  const head = new Cube();
+  head.texWeight = 0.0;
+  head.baseColor = [0.08, 0.08, 0.10, 1.0];
+  head.matrix.setIdentity();
+  head.matrix.translate(baseX + 0.38, 1.05, baseZ + 0.30);
+  head.matrix.scale(0.55, 0.50, 0.50);
+  head.render(gl, UNIFORMS, ATTRS);
+
+  // Beak (orange)
+  const beak = new Cube();
+  beak.texWeight = 0.0;
+  beak.baseColor = [0.95, 0.60, 0.10, 1.0];
+  beak.matrix.setIdentity();
+  beak.matrix.translate(baseX + 0.58, 1.18, baseZ + 0.18);
+  beak.matrix.scale(0.18, 0.12, 0.18);
+  beak.render(gl, UNIFORMS, ATTRS);
+
+  // Eyes (two tiny white cubes)
+  const eye1 = new Cube();
+  eye1.texWeight = 0.0;
+  eye1.baseColor = [0.98, 0.98, 0.98, 1.0];
+  eye1.matrix.setIdentity();
+  eye1.matrix.translate(baseX + 0.48, 1.32, baseZ + 0.25);
+  eye1.matrix.scale(0.07, 0.07, 0.07);
+  eye1.render(gl, UNIFORMS, ATTRS);
+
+  const eye2 = new Cube();
+  eye2.texWeight = 0.0;
+  eye2.baseColor = [0.98, 0.98, 0.98, 1.0];
+  eye2.matrix.setIdentity();
+  eye2.matrix.translate(baseX + 0.68, 1.32, baseZ + 0.25);
+  eye2.matrix.scale(0.07, 0.07, 0.07);
+  eye2.render(gl, UNIFORMS, ATTRS);
+
+  // Feet (orange)
+  const foot1 = new Cube();
+  foot1.texWeight = 0.0;
+  foot1.baseColor = [0.95, 0.60, 0.10, 1.0];
+  foot1.matrix.setIdentity();
+  foot1.matrix.translate(baseX + 0.32, 0.0, baseZ + 0.18);
+  foot1.matrix.scale(0.30, 0.08, 0.25);
+  foot1.render(gl, UNIFORMS, ATTRS);
+
+  const foot2 = new Cube();
+  foot2.texWeight = 0.0;
+  foot2.baseColor = [0.95, 0.60, 0.10, 1.0];
+  foot2.matrix.setIdentity();
+  foot2.matrix.translate(baseX + 0.60, 0.0, baseZ + 0.18);
+  foot2.matrix.scale(0.30, 0.08, 0.25);
+  foot2.render(gl, UNIFORMS, ATTRS);
+
+  // Wings (dark gray) - optional little flair
+  const wing1 = new Cube();
+  wing1.texWeight = 0.0;
+  wing1.baseColor = [0.15, 0.15, 0.18, 1.0];
+  wing1.matrix.setIdentity();
+  wing1.matrix.translate(baseX + 0.10, 0.45, baseZ + 0.33);
+  wing1.matrix.scale(0.18, 0.45, 0.50);
+  wing1.render(gl, UNIFORMS, ATTRS);
+
+  const wing2 = new Cube();
+  wing2.texWeight = 0.0;
+  wing2.baseColor = [0.15, 0.15, 0.18, 1.0];
+  wing2.matrix.setIdentity();
+  wing2.matrix.translate(baseX + 1.00, 0.45, baseZ + 0.33);
+  wing2.matrix.scale(0.18, 0.45, 0.50);
+  wing2.render(gl, UNIFORMS, ATTRS);
+}

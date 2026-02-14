@@ -2,53 +2,41 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>Change a point color</title>
+    <title>Assignment 4 - First Person World</title>
+    <style>
+      body { margin: 0; background: #111; }
+      #webgl { display: block; margin: 0 auto; border: 1px solid #333; }
+      #hud {
+        position: fixed; left: 12px; top: 12px;
+        color: #eee; font-family: monospace; font-size: 14px;
+        background: rgba(0,0,0,0.35); padding: 10px 12px; border-radius: 10px;
+        line-height: 1.35;
+      }
+      .small { opacity: 0.85; font-size: 12px; }
+    </style>
   </head>
 
   <body onload="main()">
-    <canvas id="webgl" width="400" height="400">
-    Please use a browser that supports "canvas"
-    </canvas>
-    <p>
-        <p id = "numdot"> numdot </p>
-    <p>
-        <button type="button" id="red">Red</button>
-        <button type="button" id="green">Green</button>
-        <button type="button" id="clearButton">Clear</button>
-    </p>
-
-    <p>
-        Head Joint <input type="range" id="headSlide" min="-45" max="45" value="0" class="slider"/>
-    </p>
-    <p>
-        Ear Flap <input type="range" id="earSlide" min="-45" max="45" value="0" class="slider"/>
-    </p>
-    <p>
-        Tail Wag <input type="range" id="tailSlide" min="-45" max="45" value="0" class="slider"/>
-    </p>
-    <p>
-        Animation:
-        <button type="button" id="animOn">On</button>
-        <button type="button" id="animOff">Off</button>
-    </p>
-
-    <p>
-    Camera Angle <input type="range" min="0" max="360" value="5" class="slider" id="angleSlide"/>
-    </p>
-
-    <div style="margin-top: 10px; font-family: sans-serif; font-size: 14px;">
-  <p><strong>Student's Name:</strong> Kenny Yu</p>
-  <p><strong>Student's UCSC Email:</strong> kyu82@ucsc.edu</p>
+    <div id="hud">
+      <div><b>Controls</b></div>
+      <div>W/A/S/D: move</div>
+      <div>Q/E: turn</div>
+      <div>Mouse drag: look</div>
+      <div>F: add block</div>
+      <div>Right click: remove block</div>
+      <div class="small">Tip: run via a local web server for textures.</div>
     </div>
+
+    <canvas id="webgl" width="900" height="600"></canvas>
 
     <script src="lib/webgl-utils.js"></script>
     <script src="lib/webgl-debug.js"></script>
     <script src="lib/cuon-utils.js"></script>
     <script src="lib/cuon-matrix.js"></script>
-    <script src="Points.js"></script>
-    <script src="Triangle.js"></script>
-    <script src="Circle.js"></script>
-    <script src="World.js"></script>
+
+    <script src="camera.js"></script>
     <script src="Cube.js"></script>
+
+    <script src="World.js"></script>
   </body>
 </html>
