@@ -68,6 +68,16 @@ let mapT = []; // texture index [z][x] 0..3
 // textures to load (must exist in same folder)
 const TEX_FILES = ["sky.jpg", "grass.jpg", "brick.jpg", "wood.png"];
 
+// ===== Story/Game state =====
+let hasKey = false;
+let gameWon = false;
+
+const KEY_POS = { x: 6, z: 6 };          // where the key is (change if you want)
+const GATE_POS = { x: 18, z: 23 };        // gate opening location (matches courtyard doorway area)
+const GOAL_POS = { x: 23, z: 23 };        // tower center-ish
+
+let hudEl = null;
+
 // uniforms/attrs pack for cleaner calls
 let UNIFORMS, ATTRS;
 
@@ -129,41 +139,201 @@ function main() {
     gl.clearColor(0.6, 0.8, 1.0, 1.0);
     requestAnimationFrame(tick);
   });
+
+hudEl = document.getElementById("hud");
+updateHUD();
 }
 
 function tick() {
   handleMovement();
+  checkStory();
   render();
   requestAnimationFrame(tick);
 }
 
 
 function makeMaps() {
+  // Helpers
+  function setCell(x, z, h, t) {
+    if (x < 0 || z < 0 || x >= WORLD_SIZE || z >= WORLD_SIZE) return;
+    mapH[z][x] = clamp(h, 0, MAX_H);
+    mapT[z][x] = clamp(t, 0, 3);
+  }
+  function rect(x0, z0, x1, z1, h, t) {
+    for (let z = z0; z <= z1; z++) {
+      for (let x = x0; x <= x1; x++) setCell(x, z, h, t);
+    }
+  }
+  function hollowRect(x0, z0, x1, z1, h, t) {
+    for (let x = x0; x <= x1; x++) { setCell(x, z0, h, t); setCell(x, z1, h, t); }
+    for (let z = z0; z <= z1; z++) { setCell(x0, z, h, t); setCell(x1, z, h, t); }
+  }
+  function roadX(z, x0, x1) { for (let x = x0; x <= x1; x++) setCell(x, z, 0, 1); }
+  function roadZ(x, z0, z1) { for (let z = z0; z <= z1; z++) setCell(x, z, 0, 1); }
+
+  // Init empty
+  mapH = [];
+  mapT = [];
   for (let z = 0; z < WORLD_SIZE; z++) {
     mapH[z] = [];
     mapT[z] = [];
     for (let x = 0; x < WORLD_SIZE; x++) {
-      const border = (x === 0 || z === 0 || x === WORLD_SIZE - 1 || z === WORLD_SIZE - 1);
-
-      // base: empty interior, tall border walls
-      let h = border ? 3 : 0;
-
-      // internal maze-ish features
-      if (x === 8 && z > 6 && z < 26) h = 2;
-      if (z === 20 && x > 10 && x < 28) h = 1;
-      if (x > 14 && x < 18 && z > 14 && z < 18) h = 4; // tower
-
-      mapH[z][x] = clamp(h, 0, MAX_H);
-
-      // choose texture per cell
-      let t = 2; // default: brick
-      if (h === 0) t = 2;
-      if (border) t = 2;
-      if (h === 1) t = 3; // wood
-      if (h === 4) t = 2; // brick
-      mapT[z][x] = clamp(t, 0, 3);
+      mapH[z][x] = 0;     // empty space
+      mapT[z][x] = 2;     // default brick if a block exists
     }
   }
+
+  // ===== 1) Outer fortress =====
+  hollowRect(0, 0, 31, 31, 3, 2);      // brick wall ring
+  // Corner towers (taller)
+  rect(0, 0, 2, 2, 4, 2);
+  rect(29, 0, 31, 2, 4, 2);
+  rect(0, 29, 2, 31, 4, 2);
+  rect(29, 29, 31, 31, 4, 2);
+
+  // Gates (openings) so you can enter/exit
+  // North gate
+  setCell(15, 0, 0, 2); setCell(16, 0, 0, 2);
+  // South gate
+  setCell(15, 31, 0, 2); setCell(16, 31, 0, 2);
+  // West gate
+  setCell(0, 15, 0, 2); setCell(0, 16, 0, 2);
+  // East gate
+  setCell(31, 15, 0, 2); setCell(31, 16, 0, 2);
+
+  // ===== 2) Main roads (walkable) =====
+  roadX(16, 1, 30);  // horizontal road
+  roadZ(16, 1, 30);  // vertical road
+  // Diagonal-ish little connector paths
+  for (let i = 0; i < 8; i++) setCell(8 + i, 8 + i, 0, 1);
+
+  // ===== 3) Village district (NW) =====
+  // Small “houses” made of wood (height 2), with doors (holes)
+  function house(cx, cz) {
+    hollowRect(cx, cz, cx + 4, cz + 4, 2, 3); // wood walls
+    rect(cx + 1, cz + 1, cx + 3, cz + 3, 0, 3); // empty interior
+    // door
+    setCell(cx + 2, cz + 4, 0, 3);
+  }
+  house(3, 3);
+  house(9, 3);
+  house(3, 9);
+  // little alley
+  roadX(8, 3, 13);
+  roadZ(8, 3, 13);
+
+  // ===== 4) Garden maze (NE) =====
+  // low hedges (height 1) using wood texture (looks distinct)
+  rect(18, 3, 29, 13, 1, 3);
+  // carve maze corridors
+  for (let z = 4; z <= 12; z += 2) roadX(z, 19, 28);
+  for (let x = 20; x <= 28; x += 2) roadZ(x, 4, 12);
+  // entrance to maze
+  roadX(13, 22, 25);
+  setCell(23, 13, 0, 3);
+
+  // ===== 5) Courtyard + tower (SE) =====
+  // courtyard walls
+  hollowRect(18, 18, 29, 29, 2, 2);
+  // courtyard interior is open
+  rect(19, 19, 28, 28, 0, 2);
+  // doorway into courtyard from main road
+  setCell(18, 23, 0, 2);
+  setCell(18, 24, 0, 2);
+
+  // tower in center (height 4), plus a “stair-step” ramp (1→2→3)
+  rect(23, 23, 24, 24, 4, 2);
+  rect(22, 23, 22, 23, 1, 2);
+  rect(21, 23, 21, 23, 2, 2);
+  rect(20, 23, 20, 23, 3, 2);
+
+  // ===== 6) Canyon ridge (SW) =====
+  // create a ridge line of height 2-3 and carve a canyon path through it
+  for (let x = 2; x <= 13; x++) {
+    setCell(x, 22, 3, 2);
+    setCell(x, 23, 2, 2);
+    setCell(x, 24, 3, 2);
+  }
+  // canyon opening
+  roadX(23, 6, 9);
+  roadZ(7, 19, 26);
+
+  // ===== 7) Spawn safety: clear a small area near start =====
+  // If your camera starts near (16,16), ensure it’s open
+  rect(15, 15, 17, 17, 0, 1);
+
+  mapH[KEY_POS.z][KEY_POS.x] = 0;
+  mapT[KEY_POS.z][KEY_POS.x] = 2;
+}
+
+function updateHUD() {
+  if (!hudEl) return;
+
+  // Keep your existing HUD controls, append story status
+  const statusLines = [
+    "<div><b>Controls</b></div>",
+    "<div>W/A/S/D: move</div>",
+    "<div>Q/E: turn</div>",
+    "<div>Mouse drag: look</div>",
+    "<div>F: add block</div>",
+    "<div>Right click: remove block</div>",
+    "<div class='small'>Quest: Find the <b>Golden Key</b>, unlock the gate, reach the tower.</div>",
+    `<div class='small'>Key: ${hasKey ? "✅ Acquired" : "❌ Not found"}</div>`,
+    `<div class='small'>Gate: ${hasKey ? "🔓 Unlocked" : "🔒 Locked"}</div>`,
+    `<div class='small'>Goal: ${gameWon ? "🏁 You win!" : "Reach the tower"}</div>`
+  ];
+
+  hudEl.innerHTML = statusLines.join("");
+}
+
+function playerCell() {
+  // Convert camera position to map cell
+  const x = clamp(Math.floor(camera.eye.elements[0]), 0, WORLD_SIZE - 1);
+  const z = clamp(Math.floor(camera.eye.elements[2]), 0, WORLD_SIZE - 1);
+  return { x, z };
+}
+
+function openGate() {
+  // Clear a 2-wide doorway in the courtyard wall
+  // This matches the doorway you created in the “interesting world” map
+  // If your gate location differs, adjust these cells.
+  for (let dz = 0; dz <= 1; dz++) {
+    mapH[GATE_POS.z + dz][GATE_POS.x] = 0;
+  }
+}
+
+function checkStory() {
+  if (gameWon) return;
+
+  const { x, z } = playerCell();
+
+  // Pick up key
+  if (!hasKey && x === KEY_POS.x && z === KEY_POS.z) {
+    hasKey = true;
+    openGate();
+    updateHUD();
+  }
+
+  // Win: reach tower area (requires key because gate blocks it)
+  if (hasKey && Math.abs(x - GOAL_POS.x) <= 1 && Math.abs(z - GOAL_POS.z) <= 1) {
+    gameWon = true;
+    updateHUD();
+
+    // Simple “celebration”: sky tint shifts
+    gl.clearColor(0.8, 0.9, 0.8, 1.0);
+  }
+}
+
+function drawKey() {
+  if (hasKey) return;
+
+  const k = new Cube();
+  k.texWeight = 0.0;                 // base color only
+  k.baseColor = [1.0, 0.85, 0.15, 1.0]; // gold
+  k.matrix.setIdentity();
+  k.matrix.translate(KEY_POS.x, 0.15, KEY_POS.z + 1); // +1 if you kept the z-offset fix
+  k.matrix.scale(0.7, 0.7, 0.7);
+  k.render(gl, UNIFORMS, ATTRS);
 }
 
 
@@ -292,6 +462,7 @@ function render() {
   drawSkybox();
   drawGround();
   drawWalls();
+  drawKey();
   drawAnimal();
 }
 
