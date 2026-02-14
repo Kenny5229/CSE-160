@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Change a point color</title>
+  </head>
+
+  <body onload="main()">
+    <canvas id="webgl" width="400" height="400">
+    Please use a browser that supports "canvas"
+    </canvas>
+    <p>
+        <p id = "numdot"> numdot </p>
+    <p>
+        <button type="button" id="red">Red</button>
+        <button type="button" id="green">Green</button>
+        <button type="button" id="clearButton">Clear</button>
+    </p>
+
+    <p>
+        Head Joint <input type="range" id="headSlide" min="-45" max="45" value="0" class="slider"/>
+    </p>
+    <p>
+        Ear Flap <input type="range" id="earSlide" min="-45" max="45" value="0" class="slider"/>
+    </p>
+    <p>
+        Tail Wag <input type="range" id="tailSlide" min="-45" max="45" value="0" class="slider"/>
+    </p>
+    <p>
+        Animation:
+        <button type="button" id="animOn">On</button>
+        <button type="button" id="animOff">Off</button>
+    </p>
+
+    <p>
+    Camera Angle <input type="range" min="0" max="360" value="5" class="slider" id="angleSlide"/>
+    </p>
+
+    <div style="margin-top: 10px; font-family: sans-serif; font-size: 14px;">
+  <p><strong>Student's Name:</strong> Kenny Yu</p>
+  <p><strong>Student's UCSC Email:</strong> kyu82@ucsc.edu</p>
+    </div>
+
+    <script src="lib/webgl-utils.js"></script>
+    <script src="lib/webgl-debug.js"></script>
+    <script src="lib/cuon-utils.js"></script>
+    <script src="lib/cuon-matrix.js"></script>
+    <script src="Points.js"></script>
+    <script src="Triangle.js"></script>
+    <script src="Circle.js"></script>
+    <script src="World.js"></script>
+    <script src="Cube.js"></script>
+  </body>
+</html>
