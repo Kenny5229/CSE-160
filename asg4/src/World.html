@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>World + Phong Lighting</title>
+    <style>
+      body { margin: 0; background: #111; }
+      #webgl { display: block; margin: 0 auto; border: 1px solid #333; }
+      #hud {
+        position: fixed; left: 12px; top: 12px;
+        color: #eee; font-family: monospace; font-size: 14px;
+        background: rgba(0,0,0,0.35); padding: 10px 12px; border-radius: 10px;
+        line-height: 1.35;
+        width: 260px;
+      }
+      .small { opacity: 0.85; font-size: 12px; }
+      input[type=range] { width: 230px; }
+      button { margin-right: 6px; margin-top: 6px; }
+    </style>
+  </head>
+
+  <body onload="main()">
+  <div id="hud">
+    <div><b>Controls</b></div>
+    <div>W/A/S/D: move</div>
+    <div>Q/E: turn</div>
+    <div>Mouse drag: look</div>
+    <div>F: add block</div>
+    <div>Right click: remove block</div>
+
+    <hr style="opacity:0.2; margin:10px 0;">
+
+    <div style="margin-top:6px;">
+      <button id="btnLight">Lighting: ON</button>
+      <button id="btnNormals">Normals: OFF</button>
+    </div>
+
+    <div style="margin-top:8px;">
+      <label>Point Light</label>
+      <input id="point" type="checkbox" checked>
+      <br/>
+
+      <label>Spotlight</label>
+      <input id="spot" type="checkbox" checked>
+    </div>
+
+    <div style="margin-top:8px;">
+      Light X <input id="lx" type="range" min="0" max="32" value="16" step="0.1"><br/>
+      Light Y <input id="ly" type="range" min="0" max="20" value="6" step="0.1"><br/>
+      Light Z <input id="lz" type="range" min="0" max="32" value="16" step="0.1"><br/>
+      Light Color (Hue) <input id="lc" type="range" min="0" max="360" value="0" step="1"><br/>
+    </div>
+
+    <div class="small" style="margin-top:6px;">
+      Tip: run via a local web server for textures.
+    </div>
+  </div>
+
+    <canvas id="webgl" width="900" height="600"></canvas>
+
+    <script src="../lib/webgl-utils.js"></script>
+    <script src="../lib/webgl-debug.js"></script>
+    <script src="../lib/cuon-utils.js"></script>
+    <script src="../lib/cuon-matrix.js"></script>
+
+    <script src="camera.js"></script>
+    <script src="Cube.js"></script>
+    <script src="Sphere.js"></script>
+
+    <script src="World.js"></script>
+  </body>
+</html>
