@@ -1,6 +1,5 @@
 // World.js
-// Upgraded for Assignment: Phong lighting + normals + point light + spotlight + UI toggles
-// Keeps your voxel world + first-person camera + add/remove blocks + story elements.
+
 
 var VSHADER_SOURCE = `
   attribute vec4 a_Position;
@@ -151,14 +150,13 @@ let lastX = 0, lastY = 0;
 const WORLD_SIZE = 32;
 const MAX_H = 4;
 
-let mapH = []; // heights [z][x] 0..4
-let mapT = []; // texture index [z][x] 0..3
+let mapH = []; 
+let mapT = []; 
 
-// textures to load (must exist in same folder)
-// NOTE: if you don't have brick.jpg, replace it with an existing file
+
 const TEX_FILES = ["sky.jpg", "grass.jpg", "brick.jpg", "wood.png"];
 
-// ===== Story/Game state =====
+// Game state
 let hasKey = false;
 let gameWon = false;
 
@@ -171,7 +169,7 @@ let hudEl = null;
 // uniforms/attrs pack
 let UNIFORMS, ATTRS;
 
-// ===== Lighting state (driven by UI) =====
+// Lighting state
 let g_lightingOn = true;
 let g_showNormals = false;
 
@@ -243,7 +241,7 @@ function main() {
   };
   ATTRS = { a_Position, a_UV, a_Normal };
 
-  // cube buffers (REQUIRES Cube.js updated to include normals)
+  // cube buffers
   initCubeBuffers(gl, a_Position, a_UV, a_Normal);
 
   // camera
@@ -274,7 +272,6 @@ function tick() {
   requestAnimationFrame(tick);
 }
 
-// ----------------- WORLD GEN -----------------
 
 function makeMaps() {
   function setCell(x, z, h, t) {
@@ -370,7 +367,7 @@ function makeMaps() {
   mapT[KEY_POS.z][KEY_POS.x] = 2;
 }
 
-// ----------------- HUD / STORY -----------------
+// HUD
 
 function ensureStoryStatusBlock() {
   if (!hudEl) return;
@@ -437,7 +434,7 @@ function drawKey() {
   k.render(gl, UNIFORMS, ATTRS);
 }
 
-// ----------------- INPUT -----------------
+// input
 
 function initInput() {
   document.addEventListener("keydown", (e) => {
@@ -483,7 +480,7 @@ function handleMovement() {
   if (keys["e"]) camera.panRight(3);
 }
 
-// ----------------- UI HOOKS -----------------
+// ui hooks
 
 function hookLightingUI() {
   const btnLight = document.getElementById("btnLight");
@@ -548,7 +545,7 @@ function hsvToRgb(h, s, v) {
   return [r,g,b];
 }
 
-// ----------------- TEXTURES -----------------
+// textures
 
 function initTextures(onDone) {
   let loaded = 0;
@@ -585,7 +582,7 @@ function initTextures(onDone) {
   loadOne(gl.TEXTURE3, u_Sampler3, TEX_FILES[3]);
 }
 
-// ----------------- BLOCK EDITING -----------------
+// block editing
 
 function cellInFront(dist = 1.2) {
   const f = camera.forwardDir();
@@ -612,7 +609,7 @@ function removeBlockInFront() {
   mapH[z][x] = clamp(mapH[z][x] - 1, 0, MAX_H);
 }
 
-// ----------------- RENDER -----------------
+// render
 
 function render() {
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
@@ -711,7 +708,7 @@ function drawWalls() {
   }
 }
 
-// ----------- SPHERES (REQUIRES Sphere.js) -----------
+// spheres
 
 function drawSpheres() {
   if (typeof Sphere === "undefined") return; // don't crash if Sphere.js missing
@@ -733,7 +730,7 @@ function drawSpheres() {
   s2.render(gl, UNIFORMS, ATTRS);
 }
 
-// ----------------- ANIMAL (YOUR PENGUIN) -----------------
+// animal
 
 function drawAnimal() {
   const baseX = 12;
