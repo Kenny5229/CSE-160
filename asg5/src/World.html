@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Assignment 4 - First Person World</title>
+    <style>
+      body { margin: 0; background: #111; }
+      #webgl { display: block; margin: 0 auto; border: 1px solid #333; }
+      #hud {
+        position: fixed; left: 12px; top: 12px;
+        color: #eee; font-family: monospace; font-size: 14px;
+        background: rgba(0,0,0,0.35); padding: 10px 12px; border-radius: 10px;
+        line-height: 1.35;
+      }
+      .small { opacity: 0.85; font-size: 12px; }
+    </style>
+  </head>
+
+  <body onload="main()">
+    <div id="hud">
+      <div><b>Controls</b></div>
+      <div>W/A/S/D: move</div>
+      <div>Q/E: turn</div>
+      <div>Mouse drag: look</div>
+      <div>F: add block</div>
+      <div>Right click: remove block</div>
+      <div class="small">Tip: run via a local web server for textures.</div>
+    </div>
+
+    <canvas id="webgl" width="900" height="600"></canvas>
+
+    <script src="lib/webgl-utils.js"></script>
+    <script src="lib/webgl-debug.js"></script>
+    <script src="lib/cuon-utils.js"></script>
+    <script src="lib/cuon-matrix.js"></script>
+
+    <script src="camera.js"></script>
+    <script src="Cube.js"></script>
+
+    <script src="World.js"></script>
+  </body>
+</html>
