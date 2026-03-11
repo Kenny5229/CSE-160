@@ -1,612 +1,660 @@
-// World.js
-// Assignment 4: First-person exploration in 32x32x4 voxel world with textures, mouse look, and add/delete blocks.
+import * as THREE from "three";
+import { PointerLockControls } from "three/addons/controls/PointerLockControls.js";
+import { MTLLoader } from "three/addons/loaders/MTLLoader.js";
+import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
 
-var VSHADER_SOURCE = `
-  attribute vec4 a_Position;
-  attribute vec2 a_UV;
+const WORLD_LIMIT = 28;
+const WALK_SPEED = 10;
+const EYE_HEIGHT = 1.8;
+const PLAYER_RADIUS = 0.75;
 
-  uniform mat4 u_ModelMatrix;
-  uniform mat4 u_ViewMatrix;
-  uniform mat4 u_ProjectionMatrix;
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
 
-  varying vec2 v_UV;
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x06101d, 0.018);
 
-  void main() {
-    gl_Position = u_ProjectionMatrix * u_ViewMatrix * u_ModelMatrix * a_Position;
-    v_UV = a_UV;
-  }
-`;
+const camera = new THREE.PerspectiveCamera(
+  70,
+  window.innerWidth / window.innerHeight,
+  0.1,
+  300
+);
+camera.position.set(0, EYE_HEIGHT, 18);
+camera.lookAt(0, EYE_HEIGHT, 0);
 
-var FSHADER_SOURCE = `
-  precision mediump float;
+const controls = new PointerLockControls(camera, document.body);
+const keys = {
+  KeyW: false,
+  KeyA: false,
+  KeyS: false,
+  KeyD: false,
+};
 
-  varying vec2 v_UV;
+const statusLine = document.getElementById("statusLine");
+const lockPanel = document.getElementById("lockPanel");
+const startButton = document.getElementById("startButton");
 
-  uniform vec4 u_BaseColor;
-  uniform float u_texColorWeight;   // 0 base only, 1 texture only
+const textureLoader = new THREE.TextureLoader();
+const clock = new THREE.Clock();
+const animatedObjects = [];
+const pulsingLights = [];
+const boxColliders = [];
+const circleColliders = [];
 
-  uniform int u_whichTexture;        // 0..3
-  uniform sampler2D u_Sampler0;
-  uniform sampler2D u_Sampler1;
-  uniform sampler2D u_Sampler2;
-  uniform sampler2D u_Sampler3;
+// Wow point note for the submission:
+// the centerpiece is the floating beacon and imported shrine, both staged under layered lighting.
 
-  vec4 pickTexture() {
-    if (u_whichTexture == 0) return texture2D(u_Sampler0, v_UV);
-    if (u_whichTexture == 1) return texture2D(u_Sampler1, v_UV);
-    if (u_whichTexture == 2) return texture2D(u_Sampler2, v_UV);
-    return texture2D(u_Sampler3, v_UV);
-  }
+setupPointerLock();
 
-  void main() {
-    vec4 texColor = pickTexture();
-    gl_FragColor = (1.0 - u_texColorWeight) * u_BaseColor + u_texColorWeight * texColor;
-  }
-`;
+const textures = loadTextures();
+buildSkybox(textures.sky);
+addGround(textures);
+addWalls(textures);
+addCourtyardStructures(textures);
+addLanternPath();
+addTrees();
+addCrates(textures);
+addBeacon();
+addLights();
+loadShrineModel().catch((error) => {
+  console.error("Failed to load shrine model:", error);
+});
 
-let canvas, gl;
+window.addEventListener("resize", onWindowResize);
+document.addEventListener("keydown", onKeyChange(true));
+document.addEventListener("keyup", onKeyChange(false));
 
-// attrib/uniform locations
-let a_Position, a_UV;
-let u_ModelMatrix, u_ViewMatrix, u_ProjectionMatrix;
-let u_BaseColor, u_texColorWeight, u_whichTexture;
-let u_Sampler0, u_Sampler1, u_Sampler2, u_Sampler3;
+renderer.setAnimationLoop(render);
 
-// camera + input
-let camera;
-let keys = {};
-let mouseDown = false;
-let lastX = 0, lastY = 0;
+function setupPointerLock() {
+  startButton.addEventListener("click", () => controls.lock());
 
-// world
-const WORLD_SIZE = 32;
-const MAX_H = 4;
-
-let mapH = []; // heights [z][x] 0..4
-let mapT = []; // texture index [z][x] 0..3
-
-// textures to load (must exist in same folder)
-const TEX_FILES = ["sky.jpg", "grass.jpg", "brick.jpg", "wood.png"];
-
-// ===== Story/Game state =====
-let hasKey = false;
-let gameWon = false;
-
-const KEY_POS = { x: 6, z: 6 };          // where the key is (change if you want)
-const GATE_POS = { x: 18, z: 23 };        // gate opening location (matches courtyard doorway area)
-const GOAL_POS = { x: 23, z: 23 };        // tower center-ish
-
-let hudEl = null;
-
-// uniforms/attrs pack for cleaner calls
-let UNIFORMS, ATTRS;
-
-
-function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
-
-function main() {
-  canvas = document.getElementById("webgl");
-  gl = canvas.getContext("webgl", { preserveDrawingBuffer: true });
-  if (!gl) {
-    console.log("WebGL not supported");
-    return;
-  }
-  gl.enable(gl.DEPTH_TEST);
-
-  if (!initShaders(gl, VSHADER_SOURCE, FSHADER_SOURCE)) {
-    console.log("Shader init failed");
-    return;
-  }
-
-  // locations
-  a_Position = gl.getAttribLocation(gl.program, "a_Position");
-  a_UV       = gl.getAttribLocation(gl.program, "a_UV");
-
-  u_ModelMatrix      = gl.getUniformLocation(gl.program, "u_ModelMatrix");
-  u_ViewMatrix       = gl.getUniformLocation(gl.program, "u_ViewMatrix");
-  u_ProjectionMatrix = gl.getUniformLocation(gl.program, "u_ProjectionMatrix");
-
-  u_BaseColor       = gl.getUniformLocation(gl.program, "u_BaseColor");
-  u_texColorWeight  = gl.getUniformLocation(gl.program, "u_texColorWeight");
-  u_whichTexture    = gl.getUniformLocation(gl.program, "u_whichTexture");
-
-  u_Sampler0 = gl.getUniformLocation(gl.program, "u_Sampler0");
-  u_Sampler1 = gl.getUniformLocation(gl.program, "u_Sampler1");
-  u_Sampler2 = gl.getUniformLocation(gl.program, "u_Sampler2");
-  u_Sampler3 = gl.getUniformLocation(gl.program, "u_Sampler3");
-
-  UNIFORMS = {
-    u_ModelMatrix, u_ViewMatrix, u_ProjectionMatrix,
-    u_BaseColor, u_texColorWeight, u_whichTexture
-  };
-  ATTRS = { a_Position, a_UV };
-
-  // cube buffers
-  initCubeBuffers(gl, a_Position, a_UV);
-
-  // camera
-  camera = new Camera(canvas);
-  gl.uniformMatrix4fv(u_ProjectionMatrix, false, camera.projectionMatrix.elements);
-
-  // world maps
-  makeMaps();
-
-  // input
-  initInput();
-
-  // texture load then start loop
-  initTextures(() => {
-    gl.clearColor(0.6, 0.8, 1.0, 1.0);
-    requestAnimationFrame(tick);
+  controls.addEventListener("lock", () => {
+    lockPanel.classList.add("hidden");
+    statusLine.textContent = "Mouse look active. Explore the observatory with W A S D.";
   });
 
-hudEl = document.getElementById("hud");
-updateHUD();
+  controls.addEventListener("unlock", () => {
+    lockPanel.classList.remove("hidden");
+    statusLine.textContent = "Mouse look is paused.";
+  });
 }
 
-function tick() {
-  handleMovement();
-  checkStory();
-  render();
-  requestAnimationFrame(tick);
+function loadTextures() {
+  const grass = textureLoader.load(new URL("./grass.jpg", import.meta.url).href);
+  grass.colorSpace = THREE.SRGBColorSpace;
+  grass.wrapS = THREE.RepeatWrapping;
+  grass.wrapT = THREE.RepeatWrapping;
+  grass.repeat.set(18, 18);
+
+  const brick = textureLoader.load(new URL("./brick.jpg", import.meta.url).href);
+  brick.colorSpace = THREE.SRGBColorSpace;
+  brick.wrapS = THREE.RepeatWrapping;
+  brick.wrapT = THREE.RepeatWrapping;
+  brick.repeat.set(3, 1.5);
+
+  const wood = textureLoader.load(new URL("./wood.png", import.meta.url).href);
+  wood.colorSpace = THREE.SRGBColorSpace;
+  wood.wrapS = THREE.RepeatWrapping;
+  wood.wrapT = THREE.RepeatWrapping;
+  wood.repeat.set(1.5, 1.5);
+
+  const sky = new URL("./sky.jpg", import.meta.url).href;
+
+  return { grass, brick, wood, sky };
 }
 
-
-function makeMaps() {
-  // Helpers
-  function setCell(x, z, h, t) {
-    if (x < 0 || z < 0 || x >= WORLD_SIZE || z >= WORLD_SIZE) return;
-    mapH[z][x] = clamp(h, 0, MAX_H);
-    mapT[z][x] = clamp(t, 0, 3);
-  }
-  function rect(x0, z0, x1, z1, h, t) {
-    for (let z = z0; z <= z1; z++) {
-      for (let x = x0; x <= x1; x++) setCell(x, z, h, t);
-    }
-  }
-  function hollowRect(x0, z0, x1, z1, h, t) {
-    for (let x = x0; x <= x1; x++) { setCell(x, z0, h, t); setCell(x, z1, h, t); }
-    for (let z = z0; z <= z1; z++) { setCell(x0, z, h, t); setCell(x1, z, h, t); }
-  }
-  function roadX(z, x0, x1) { for (let x = x0; x <= x1; x++) setCell(x, z, 0, 1); }
-  function roadZ(x, z0, z1) { for (let z = z0; z <= z1; z++) setCell(x, z, 0, 1); }
-
-  // Init empty
-  mapH = [];
-  mapT = [];
-  for (let z = 0; z < WORLD_SIZE; z++) {
-    mapH[z] = [];
-    mapT[z] = [];
-    for (let x = 0; x < WORLD_SIZE; x++) {
-      mapH[z][x] = 0;     // empty space
-      mapT[z][x] = 2;     // default brick if a block exists
-    }
-  }
-
-  // ===== 1) Outer fortress =====
-  hollowRect(0, 0, 31, 31, 3, 2);      // brick wall ring
-  // Corner towers (taller)
-  rect(0, 0, 2, 2, 4, 2);
-  rect(29, 0, 31, 2, 4, 2);
-  rect(0, 29, 2, 31, 4, 2);
-  rect(29, 29, 31, 31, 4, 2);
-
-  // Gates (openings) so you can enter/exit
-  // North gate
-  setCell(15, 0, 0, 2); setCell(16, 0, 0, 2);
-  // South gate
-  setCell(15, 31, 0, 2); setCell(16, 31, 0, 2);
-  // West gate
-  setCell(0, 15, 0, 2); setCell(0, 16, 0, 2);
-  // East gate
-  setCell(31, 15, 0, 2); setCell(31, 16, 0, 2);
-
-  // ===== 2) Main roads (walkable) =====
-  roadX(16, 1, 30);  // horizontal road
-  roadZ(16, 1, 30);  // vertical road
-  // Diagonal-ish little connector paths
-  for (let i = 0; i < 8; i++) setCell(8 + i, 8 + i, 0, 1);
-
-  // ===== 3) Village district (NW) =====
-  // Small “houses” made of wood (height 2), with doors (holes)
-  function house(cx, cz) {
-    hollowRect(cx, cz, cx + 4, cz + 4, 2, 3); // wood walls
-    rect(cx + 1, cz + 1, cx + 3, cz + 3, 0, 3); // empty interior
-    // door
-    setCell(cx + 2, cz + 4, 0, 3);
-  }
-  house(3, 3);
-  house(9, 3);
-  house(3, 9);
-  // little alley
-  roadX(8, 3, 13);
-  roadZ(8, 3, 13);
-
-  // ===== 4) Garden maze (NE) =====
-  // low hedges (height 1) using wood texture (looks distinct)
-  rect(18, 3, 29, 13, 1, 3);
-  // carve maze corridors
-  for (let z = 4; z <= 12; z += 2) roadX(z, 19, 28);
-  for (let x = 20; x <= 28; x += 2) roadZ(x, 4, 12);
-  // entrance to maze
-  roadX(13, 22, 25);
-  setCell(23, 13, 0, 3);
-
-  // ===== 5) Courtyard + tower (SE) =====
-  // courtyard walls
-  hollowRect(18, 18, 29, 29, 2, 2);
-  // courtyard interior is open
-  rect(19, 19, 28, 28, 0, 2);
-  // doorway into courtyard from main road
-  setCell(18, 23, 0, 2);
-  setCell(18, 24, 0, 2);
-
-  // tower in center (height 4), plus a “stair-step” ramp (1→2→3)
-  rect(23, 23, 24, 24, 4, 2);
-  rect(22, 23, 22, 23, 1, 2);
-  rect(21, 23, 21, 23, 2, 2);
-  rect(20, 23, 20, 23, 3, 2);
-
-  // ===== 6) Canyon ridge (SW) =====
-  // create a ridge line of height 2-3 and carve a canyon path through it
-  for (let x = 2; x <= 13; x++) {
-    setCell(x, 22, 3, 2);
-    setCell(x, 23, 2, 2);
-    setCell(x, 24, 3, 2);
-  }
-  // canyon opening
-  roadX(23, 6, 9);
-  roadZ(7, 19, 26);
-
-  // ===== 7) Spawn safety: clear a small area near start =====
-  // If your camera starts near (16,16), ensure it’s open
-  rect(15, 15, 17, 17, 0, 1);
-
-  mapH[KEY_POS.z][KEY_POS.x] = 0;
-  mapT[KEY_POS.z][KEY_POS.x] = 2;
+function buildSkybox(skyUrl) {
+  const cubeTexture = new THREE.CubeTextureLoader().load([
+    skyUrl,
+    skyUrl,
+    skyUrl,
+    skyUrl,
+    skyUrl,
+    skyUrl,
+  ]);
+  cubeTexture.colorSpace = THREE.SRGBColorSpace;
+  scene.background = cubeTexture;
 }
 
-function updateHUD() {
-  if (!hudEl) return;
+function addGround(textures) {
+  const ground = new THREE.Mesh(
+    new THREE.PlaneGeometry(70, 70),
+    new THREE.MeshStandardMaterial({
+      map: textures.grass,
+      roughness: 0.95,
+      metalness: 0.05,
+    })
+  );
+  ground.rotation.x = -Math.PI / 2;
+  ground.receiveShadow = true;
+  scene.add(ground);
 
-  // Keep your existing HUD controls, append story status
-  const statusLines = [
-    "<div><b>Controls</b></div>",
-    "<div>W/A/S/D: move</div>",
-    "<div>Q/E: turn</div>",
-    "<div>Mouse drag: look</div>",
-    "<div>F: add block</div>",
-    "<div>Right click: remove block</div>",
-    "<div class='small'>Quest: Find the <b>Golden Key</b>, unlock the gate, reach the tower.</div>",
-    `<div class='small'>Key: ${hasKey ? "✅ Acquired" : "❌ Not found"}</div>`,
-    `<div class='small'>Gate: ${hasKey ? "🔓 Unlocked" : "🔒 Locked"}</div>`,
-    `<div class='small'>Goal: ${gameWon ? "🏁 You win!" : "Reach the tower"}</div>`
+  const innerWalk = new THREE.Mesh(
+    new THREE.RingGeometry(8, 15, 48),
+    new THREE.MeshStandardMaterial({
+      color: 0x5e6873,
+      roughness: 1,
+      metalness: 0,
+      side: THREE.DoubleSide,
+    })
+  );
+  innerWalk.rotation.x = -Math.PI / 2;
+  innerWalk.position.y = 0.02;
+  innerWalk.receiveShadow = true;
+  scene.add(innerWalk);
+}
+
+function addWalls(textures) {
+  const wallMaterial = new THREE.MeshStandardMaterial({
+    map: textures.brick,
+    roughness: 0.8,
+    metalness: 0.05,
+  });
+
+  const wallSpecs = [
+    { position: [0, 2.5, -24], size: [44, 5, 2] },
+    { position: [0, 2.5, 24], size: [44, 5, 2] },
+    { position: [-24, 2.5, 0], size: [2, 5, 44] },
+    { position: [24, 2.5, 0], size: [2, 5, 44] },
   ];
 
-  hudEl.innerHTML = statusLines.join("");
+  wallSpecs.forEach(({ position, size }) => {
+    const wall = new THREE.Mesh(new THREE.BoxGeometry(...size), wallMaterial);
+    wall.position.set(...position);
+    wall.castShadow = true;
+    wall.receiveShadow = true;
+    scene.add(wall);
+    addBoxCollider(position[0], position[2], size[0], size[2]);
+  });
+
+  const towerMaterial = new THREE.MeshStandardMaterial({
+    map: textures.brick,
+    roughness: 0.75,
+    metalness: 0.08,
+  });
+
+  [
+    [-20, 4, -20],
+    [20, 4, -20],
+    [-20, 4, 20],
+    [20, 4, 20],
+  ].forEach((position) => {
+    const tower = new THREE.Mesh(
+      new THREE.CylinderGeometry(2.4, 2.8, 8, 18),
+      towerMaterial
+    );
+    tower.position.set(...position);
+    tower.castShadow = true;
+    tower.receiveShadow = true;
+    scene.add(tower);
+    addCircleCollider(position[0], position[2], 2.7);
+
+    const roof = new THREE.Mesh(
+      new THREE.ConeGeometry(2.8, 2.6, 18),
+      new THREE.MeshStandardMaterial({ color: 0x473431, roughness: 0.88 })
+    );
+    roof.position.set(position[0], 9.2, position[2]);
+    roof.castShadow = true;
+    scene.add(roof);
+  });
 }
 
-function playerCell() {
-  // Convert camera position to map cell
-  const x = clamp(Math.floor(camera.eye.elements[0]), 0, WORLD_SIZE - 1);
-  const z = clamp(Math.floor(camera.eye.elements[2]), 0, WORLD_SIZE - 1);
-  return { x, z };
+function addCourtyardStructures(textures) {
+  const stoneMaterial = new THREE.MeshStandardMaterial({
+    color: 0xa8b0c2,
+    roughness: 0.72,
+    metalness: 0.15,
+  });
+
+  const observatoryBase = new THREE.Mesh(
+    new THREE.CylinderGeometry(6, 7, 3.5, 32),
+    stoneMaterial
+  );
+  observatoryBase.position.set(0, 1.75, 0);
+  observatoryBase.castShadow = true;
+  observatoryBase.receiveShadow = true;
+  scene.add(observatoryBase);
+  addCircleCollider(0, 0, 6.8);
+
+  const observatoryDome = new THREE.Mesh(
+    new THREE.SphereGeometry(4.8, 32, 24),
+    new THREE.MeshStandardMaterial({
+      color: 0x8798b5,
+      roughness: 0.28,
+      metalness: 0.4,
+      transparent: true,
+      opacity: 0.95,
+      emissive: 0x2e4d7a,
+      emissiveIntensity: 1.1,
+    })
+  );
+  observatoryDome.position.set(0, 5.5, 0);
+  observatoryDome.castShadow = true;
+  scene.add(observatoryDome);
+
+  const domeGlow = new THREE.PointLight(0x7ec8ff, 2.4, 28, 2);
+  domeGlow.position.set(0, 7.5, 0);
+  scene.add(domeGlow);
+  pulsingLights.push({ light: domeGlow, offset: 2.4, base: 2.4, swing: 0.35 });
+
+  const podium = new THREE.Mesh(
+    new THREE.CylinderGeometry(1.6, 2, 1.2, 18),
+    new THREE.MeshStandardMaterial({
+      map: textures.wood,
+      roughness: 0.88,
+      metalness: 0.05,
+    })
+  );
+  podium.position.set(0, 0.6, 0);
+  podium.castShadow = true;
+  podium.receiveShadow = true;
+  scene.add(podium);
+
+  [
+    [-8, 1.5, 0],
+    [8, 1.5, 0],
+    [0, 1.5, -8],
+    [0, 1.5, 8],
+  ].forEach((position, index) => {
+    const column = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.7, 0.9, 3, 14),
+      stoneMaterial
+    );
+    column.position.set(...position);
+    column.castShadow = true;
+    column.receiveShadow = true;
+    scene.add(column);
+    addCircleCollider(position[0], position[2], 0.95);
+
+    const cap = new THREE.Mesh(
+      new THREE.TorusGeometry(1.05, 0.14, 12, 32),
+      new THREE.MeshStandardMaterial({
+        color: index % 2 === 0 ? 0xdbd6ff : 0x8fd8ff,
+        emissive: index % 2 === 0 ? 0x2c235d : 0x0e3848,
+        roughness: 0.35,
+        metalness: 0.42,
+      })
+    );
+    cap.rotation.x = Math.PI / 2;
+    cap.position.set(position[0], 3.15, position[2]);
+    cap.castShadow = true;
+    scene.add(cap);
+  });
 }
 
-function openGate() {
-  // Clear a 2-wide doorway in the courtyard wall
-  // This matches the doorway you created in the “interesting world” map
-  // If your gate location differs, adjust these cells.
-  for (let dz = 0; dz <= 1; dz++) {
-    mapH[GATE_POS.z + dz][GATE_POS.x] = 0;
+function addLanternPath() {
+  const postMaterial = new THREE.MeshStandardMaterial({
+    color: 0x45362b,
+    roughness: 0.92,
+    metalness: 0.08,
+  });
+  const globeMaterial = new THREE.MeshStandardMaterial({
+    color: 0xffd77c,
+    emissive: 0xffb347,
+    emissiveIntensity: 2.2,
+    roughness: 0.18,
+    metalness: 0.25,
+  });
+
+  const lanternPositions = [
+    [-12, -12],
+    [-12, -4],
+    [-12, 4],
+    [-12, 12],
+    [12, -12],
+    [12, -4],
+    [12, 4],
+    [12, 12],
+  ];
+
+  lanternPositions.forEach(([x, z], index) => {
+    const post = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.15, 0.18, 3.2, 12),
+      postMaterial
+    );
+    post.position.set(x, 1.6, z);
+    post.castShadow = true;
+    scene.add(post);
+    addCircleCollider(x, z, 0.45);
+
+    const globe = new THREE.Mesh(
+      new THREE.SphereGeometry(0.38, 18, 18),
+      globeMaterial
+    );
+    globe.position.set(x, 3.35, z);
+    globe.castShadow = true;
+    scene.add(globe);
+
+    const light = new THREE.PointLight(0xffd27a, 2.6, 15, 2);
+    light.position.set(x, 3.35, z);
+    light.castShadow = index < 4;
+    scene.add(light);
+    pulsingLights.push({ light, offset: index * 0.8, base: 2.6, swing: 0.45 });
+  });
+}
+
+function addTrees() {
+  const trunkMaterial = new THREE.MeshStandardMaterial({
+    color: 0x553826,
+    roughness: 0.98,
+  });
+  const leafMaterial = new THREE.MeshStandardMaterial({
+    color: 0x2f6f4c,
+    roughness: 0.86,
+  });
+
+  [
+    [-16, -15],
+    [17, -16],
+    [-17, 15],
+    [16, 16],
+  ].forEach(([x, z]) => {
+    const trunk = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.35, 0.45, 2.6, 10),
+      trunkMaterial
+    );
+    trunk.position.set(x, 1.3, z);
+    trunk.castShadow = true;
+    scene.add(trunk);
+    addCircleCollider(x, z, 1.1);
+
+    const canopy = new THREE.Mesh(
+      new THREE.SphereGeometry(1.8, 20, 16),
+      leafMaterial
+    );
+    canopy.position.set(x, 3.6, z);
+    canopy.castShadow = true;
+    scene.add(canopy);
+  });
+}
+
+function addCrates(textures) {
+  const crateMaterial = new THREE.MeshStandardMaterial({
+    map: textures.wood,
+    roughness: 0.86,
+    metalness: 0.05,
+  });
+
+  [
+    [-6, 0.7, 10],
+    [-4.8, 0.7, 11.1],
+    [6, 0.7, 10],
+    [7.1, 0.7, 8.8],
+    [-9, 0.7, -9],
+    [9, 0.7, -9],
+  ].forEach((position, index) => {
+    const crate = new THREE.Mesh(
+      new THREE.BoxGeometry(1.3, 1.3, 1.3),
+      crateMaterial
+    );
+    crate.position.set(...position);
+    crate.rotation.y = index * 0.35;
+    crate.castShadow = true;
+    crate.receiveShadow = true;
+    scene.add(crate);
+    addBoxCollider(position[0], position[2], 1.3, 1.3);
+  });
+}
+
+function addBeacon() {
+  const beaconGroup = new THREE.Group();
+  beaconGroup.position.set(0, 2.1, 0);
+
+  const core = new THREE.Mesh(
+    new THREE.SphereGeometry(0.8, 28, 24),
+    new THREE.MeshStandardMaterial({
+      color: 0xb8f5ff,
+      emissive: 0x6ae6ff,
+      emissiveIntensity: 4.5,
+      roughness: 0.05,
+      metalness: 0.22,
+    })
+  );
+  core.castShadow = true;
+  beaconGroup.add(core);
+
+  const innerHalo = new THREE.Mesh(
+    new THREE.SphereGeometry(1.3, 24, 20),
+    new THREE.MeshBasicMaterial({
+      color: 0x6be8ff,
+      transparent: true,
+      opacity: 0.22,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    })
+  );
+  beaconGroup.add(innerHalo);
+
+  const outerHalo = new THREE.Mesh(
+    new THREE.SphereGeometry(2.3, 24, 20),
+    new THREE.MeshBasicMaterial({
+      color: 0x5dbfff,
+      transparent: true,
+      opacity: 0.12,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    })
+  );
+  beaconGroup.add(outerHalo);
+
+  const ringA = new THREE.Mesh(
+    new THREE.TorusGeometry(1.5, 0.12, 16, 48),
+    new THREE.MeshStandardMaterial({
+      color: 0xd5e4ff,
+      emissive: 0x6f95ff,
+      emissiveIntensity: 2.0,
+      roughness: 0.2,
+      metalness: 0.75,
+    })
+  );
+  ringA.rotation.x = Math.PI / 2;
+  beaconGroup.add(ringA);
+
+  const ringB = ringA.clone();
+  ringB.rotation.x = Math.PI / 6;
+  ringB.rotation.y = Math.PI / 5;
+  beaconGroup.add(ringB);
+
+  const glowLight = new THREE.PointLight(0x87e8ff, 5.8, 24, 2);
+  glowLight.position.set(0, 0.4, 0);
+  glowLight.castShadow = true;
+  beaconGroup.add(glowLight);
+
+  scene.add(beaconGroup);
+  animatedObjects.push({
+    group: beaconGroup,
+    core,
+    innerHalo,
+    outerHalo,
+    ringA,
+    ringB,
+    light: glowLight,
+  });
+}
+
+function addLights() {
+  const ambient = new THREE.AmbientLight(0x5f6f96, 0.45);
+  scene.add(ambient);
+
+  const hemisphere = new THREE.HemisphereLight(0x6e88b7, 0x182130, 0.6);
+  scene.add(hemisphere);
+
+  const moon = new THREE.DirectionalLight(0xd9e8ff, 1.4);
+  moon.position.set(12, 20, 8);
+  moon.castShadow = true;
+  moon.shadow.mapSize.set(2048, 2048);
+  moon.shadow.camera.left = -30;
+  moon.shadow.camera.right = 30;
+  moon.shadow.camera.top = 30;
+  moon.shadow.camera.bottom = -30;
+  scene.add(moon);
+
+  const observatorySpot = new THREE.SpotLight(0xb8d7ff, 2.9, 60, Math.PI / 7, 0.35, 1.2);
+  observatorySpot.position.set(-9, 12, 9);
+  observatorySpot.target.position.set(0, 3, 0);
+  observatorySpot.castShadow = true;
+  scene.add(observatorySpot);
+  scene.add(observatorySpot.target);
+}
+
+async function loadShrineModel() {
+  const mtlLoader = new MTLLoader();
+  const materials = await mtlLoader.loadAsync(
+    new URL("./models/shrine.mtl", import.meta.url).href
+  );
+  materials.preload();
+
+  const objLoader = new OBJLoader();
+  objLoader.setMaterials(materials);
+
+  const shrine = await objLoader.loadAsync(
+    new URL("./models/shrine.obj", import.meta.url).href
+  );
+
+  shrine.position.set(0, 0, -10);
+  shrine.scale.setScalar(1.6);
+  shrine.rotation.y = Math.PI / 4;
+  shrine.traverse((child) => {
+    if (child.isMesh) {
+      child.castShadow = true;
+      child.receiveShadow = true;
+    }
+  });
+
+  const modelLight = new THREE.PointLight(0xffa95a, 1.2, 10, 2);
+  modelLight.position.set(0, 3.2, -10);
+  scene.add(modelLight);
+  pulsingLights.push({ light: modelLight, offset: 5.6, base: 1.2, swing: 0.28 });
+
+  scene.add(shrine);
+  addBoxCollider(0, -10, 5.5, 5.5);
+  animatedObjects.push({ importedModel: shrine });
+}
+
+function addBoxCollider(x, z, width, depth) {
+  boxColliders.push({ x, z, halfWidth: width / 2, halfDepth: depth / 2 });
+}
+
+function addCircleCollider(x, z, radius) {
+  circleColliders.push({ x, z, radius });
+}
+
+function collidesAt(x, z) {
+  if (x < -WORLD_LIMIT || x > WORLD_LIMIT || z < -WORLD_LIMIT || z > WORLD_LIMIT) {
+    return true;
   }
-}
 
-function checkStory() {
-  if (gameWon) return;
-
-  const { x, z } = playerCell();
-
-  // Pick up key
-  if (!hasKey && x === KEY_POS.x && z === KEY_POS.z) {
-    hasKey = true;
-    openGate();
-    updateHUD();
+  for (const collider of boxColliders) {
+    const dx = Math.abs(x - collider.x);
+    const dz = Math.abs(z - collider.z);
+    if (dx <= collider.halfWidth + PLAYER_RADIUS && dz <= collider.halfDepth + PLAYER_RADIUS) {
+      return true;
+    }
   }
 
-  // Win: reach tower area (requires key because gate blocks it)
-  if (hasKey && Math.abs(x - GOAL_POS.x) <= 1 && Math.abs(z - GOAL_POS.z) <= 1) {
-    gameWon = true;
-    updateHUD();
-
-    // Simple “celebration”: sky tint shifts
-    gl.clearColor(0.8, 0.9, 0.8, 1.0);
-  }
-}
-
-function drawKey() {
-  if (hasKey) return;
-
-  const k = new Cube();
-  k.texWeight = 0.0;                 // base color only
-  k.baseColor = [1.0, 0.85, 0.15, 1.0]; // gold
-  k.matrix.setIdentity();
-  k.matrix.translate(KEY_POS.x, 0.15, KEY_POS.z + 1); // +1 if you kept the z-offset fix
-  k.matrix.scale(0.7, 0.7, 0.7);
-  k.render(gl, UNIFORMS, ATTRS);
-}
-
-
-function initInput() {
-  document.addEventListener("keydown", (e) => {
-    keys[e.key.toLowerCase()] = true;
-
-    // Minecraft actions
-    if (e.key.toLowerCase() === "f") addBlockInFront();
-  });
-
-  document.addEventListener("keyup", (e) => {
-    keys[e.key.toLowerCase()] = false;
-  });
-
-  canvas.addEventListener("mousedown", (e) => {
-    mouseDown = true;
-    lastX = e.clientX;
-    lastY = e.clientY;
-  });
-
-  document.addEventListener("mouseup", () => {
-    mouseDown = false;
-  });
-
-  document.addEventListener("mousemove", (e) => {
-    if (!mouseDown) return;
-    const dx = e.clientX - lastX;
-    const dy = e.clientY - lastY;
-    lastX = e.clientX;
-    lastY = e.clientY;
-    camera.look(dx, dy);
-  });
-
-  // Right click removes block
-  document.addEventListener("contextmenu", (e) => {
-    e.preventDefault();
-    removeBlockInFront();
-  });
-}
-
-function handleMovement() {
-  if (keys["w"]) camera.moveForward();
-  if (keys["s"]) camera.moveBackwards();
-  if (keys["a"]) camera.moveLeft();
-  if (keys["d"]) camera.moveRight();
-  if (keys["q"]) camera.panLeft(3);
-  if (keys["e"]) camera.panRight(3);
-}
-
-
-function initTextures(onDone) {
-  let loaded = 0;
-
-  function loadOne(texUnit, samplerUniform, src) {
-    const tex = gl.createTexture();
-    const img = new Image();
-
-    img.onload = () => {
-      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 1);
-
-      gl.activeTexture(texUnit);
-      gl.bindTexture(gl.TEXTURE_2D, tex);
-
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-      //gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
-      //gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
-
-      // sampler = texture unit index
-      gl.uniform1i(samplerUniform, texUnit - gl.TEXTURE0);
-
-      loaded++;
-      if (loaded === TEX_FILES.length) onDone();
-    };
-
-    img.onerror = () => {
-      console.log("Failed to load texture:", src);
-    };
-
-    img.src = src;
+  for (const collider of circleColliders) {
+    const dx = x - collider.x;
+    const dz = z - collider.z;
+    const minDistance = collider.radius + PLAYER_RADIUS;
+    if (dx * dx + dz * dz <= minDistance * minDistance) {
+      return true;
+    }
   }
 
-  loadOne(gl.TEXTURE0, u_Sampler0, TEX_FILES[0]); // sky
-  loadOne(gl.TEXTURE1, u_Sampler1, TEX_FILES[1]); // grass
-  loadOne(gl.TEXTURE2, u_Sampler2, TEX_FILES[2]); // brick
-  loadOne(gl.TEXTURE3, u_Sampler3, TEX_FILES[3]); // wood
+  return false;
 }
 
-
-function cellInFront(dist = 1.2) {
-  const f = camera.forwardDir();
-  const ex = camera.eye.elements[0];
-  const ez = camera.eye.elements[2];
-
-  const tx = Math.floor(ex + f.elements[0] * dist);
-  const tz = Math.floor(ez + f.elements[2] * dist);
-
-  return {
-    x: clamp(tx, 0, WORLD_SIZE - 1),
-    z: clamp(tz, 0, WORLD_SIZE - 1)
+function onKeyChange(isDown) {
+  return (event) => {
+    if (event.code in keys) {
+      keys[event.code] = isDown;
+    }
   };
 }
 
-function addBlockInFront() {
-  const { x, z } = cellInFront();
-  mapH[z][x] = clamp(mapH[z][x] + 1, 0, MAX_H);
-  mapT[z][x] = 3; // placed blocks use wood 
-}
+function updateMovement(delta) {
+  if (!controls.isLocked) {
+    return;
+  }
 
-function removeBlockInFront() {
-  const { x, z } = cellInFront();
-  mapH[z][x] = clamp(mapH[z][x] - 1, 0, MAX_H);
-}
+  const forward = Number(keys.KeyW) - Number(keys.KeyS);
+  const strafe = Number(keys.KeyD) - Number(keys.KeyA);
+  if (forward === 0 && strafe === 0) {
+    camera.position.y = EYE_HEIGHT;
+    return;
+  }
 
+  const move = new THREE.Vector3();
+  const lookDirection = new THREE.Vector3();
+  camera.getWorldDirection(lookDirection);
+  lookDirection.y = 0;
+  lookDirection.normalize();
+
+  const right = new THREE.Vector3(-lookDirection.z, 0, lookDirection.x);
+  move.addScaledVector(lookDirection, forward);
+  move.addScaledVector(right, strafe);
+
+  if (move.lengthSq() > 0) {
+    move.normalize().multiplyScalar(WALK_SPEED * delta);
+  }
+
+  const nextX = THREE.MathUtils.clamp(camera.position.x + move.x, -WORLD_LIMIT, WORLD_LIMIT);
+  const nextZ = THREE.MathUtils.clamp(camera.position.z + move.z, -WORLD_LIMIT, WORLD_LIMIT);
+
+  if (!collidesAt(nextX, camera.position.z)) {
+    camera.position.x = nextX;
+  }
+
+  if (!collidesAt(camera.position.x, nextZ)) {
+    camera.position.z = nextZ;
+  }
+
+  camera.position.y = EYE_HEIGHT;
+}
 
 function render() {
-  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  const delta = clock.getDelta();
+  const elapsed = clock.elapsedTime;
 
-  gl.uniformMatrix4fv(u_ViewMatrix, false, camera.viewMatrix.elements);
+  updateMovement(delta);
 
-  drawSkybox();
-  drawGround();
-  drawWalls();
-  drawKey();
-  drawAnimal();
-}
-
-function drawGround() {
-  const g = new Cube();
-  g.texWeight = 1.0;
-  g.whichTexture = 1; // grass
-  g.baseColor = [1, 1, 1, 1];
-
-  g.matrix.setIdentity();
-  // Move cube so it covers (0..WORLD_SIZE) and sits at y=0
-  g.matrix.translate(0, 0, 30);
-  g.matrix.scale(WORLD_SIZE, 0.1, WORLD_SIZE);
-
-  g.render(gl, UNIFORMS, ATTRS);
-}
-
-function drawSkybox() {
-  const s = new Cube();
-  s.texWeight = 0.0; // base only
-  s.baseColor = [0.5, 0.7, 1.0, 1.0];
-
-
-  const big = 200;
-  s.matrix.setIdentity();
-  // Center it around world
-  s.matrix.translate(-big / 2 + WORLD_SIZE / 2, -big / 2 + 20, -big / 2 + WORLD_SIZE / 2);
-  s.matrix.scale(big, big, big);
-
-  s.render(gl, UNIFORMS, ATTRS);
-}
-
-function drawWalls() {
-  for (let z = 0; z < WORLD_SIZE; z++) {
-    for (let x = 0; x < WORLD_SIZE; x++) {
-      const h = mapH[z][x];
-      if (h <= 0) continue;
-
-      for (let y = 0; y < h; y++) {
-        const w = new Cube();
-        w.texWeight = 1.0;
-        w.whichTexture = mapT[z][x]; // 0..3
-        w.baseColor = [1, 1, 1, 1];
-
-        w.matrix.setIdentity();
-        w.matrix.translate(x, y, z);
-
-        w.render(gl, UNIFORMS, ATTRS);
-      }
+  animatedObjects.forEach((item, index) => {
+    if (item.group) {
+      item.group.rotation.y += delta * 0.75;
+      item.group.position.y = 2.1 + Math.sin(elapsed * 2 + index) * 0.18;
+      item.core.position.y = Math.sin(elapsed * 2.7) * 0.15;
+      item.innerHalo.scale.setScalar(1 + Math.sin(elapsed * 2.1) * 0.08);
+      item.outerHalo.scale.setScalar(1.04 + Math.sin(elapsed * 1.5 + 0.7) * 0.12);
+      item.innerHalo.material.opacity = 0.24 + Math.sin(elapsed * 3.2) * 0.05;
+      item.outerHalo.material.opacity = 0.12 + Math.sin(elapsed * 2.4 + 0.4) * 0.04;
+      item.ringA.rotation.z += delta * 0.9;
+      item.ringB.rotation.y += delta * 1.2;
+      item.light.intensity = 5.8 + Math.sin(elapsed * 3.5) * 0.9;
     }
-  }
+
+    if (item.importedModel) {
+      item.importedModel.rotation.y = Math.PI / 4 + elapsed * 0.18;
+    }
+  });
+
+  pulsingLights.forEach(({ light, offset, base, swing }) => {
+    light.intensity = base + Math.sin(elapsed * 3 + offset) * swing;
+  });
+
+  renderer.render(scene, camera);
 }
 
-// Animal in the world (simple blocky creature) 
-
-function drawAnimal() {
-  // Blocky penguin (simple cubes)
-  const baseX = 12;
-  const baseZ = 12 + 1; 
-
-  // Body (black)
-  const body = new Cube();
-  body.texWeight = 0.0;
-  body.baseColor = [0.08, 0.08, 0.10, 1.0];
-  body.matrix.setIdentity();
-  body.matrix.translate(baseX + 0.25, 0.0, baseZ + 0.25);
-  body.matrix.scale(0.9, 1.1, 0.7);
-  body.render(gl, UNIFORMS, ATTRS);
-
-  // Belly (white)
-  const belly = new Cube();
-  belly.texWeight = 0.0;
-  belly.baseColor = [0.92, 0.92, 0.95, 1.0];
-  belly.matrix.setIdentity();
-  belly.matrix.translate(baseX + 0.42, 0.25, baseZ + 0.30);
-  belly.matrix.scale(0.56, 0.70, 0.52);
-  belly.render(gl, UNIFORMS, ATTRS);
-
-  // Head (black)
-  const head = new Cube();
-  head.texWeight = 0.0;
-  head.baseColor = [0.08, 0.08, 0.10, 1.0];
-  head.matrix.setIdentity();
-  head.matrix.translate(baseX + 0.38, 1.05, baseZ + 0.30);
-  head.matrix.scale(0.55, 0.50, 0.50);
-  head.render(gl, UNIFORMS, ATTRS);
-
-  // Beak (orange)
-  const beak = new Cube();
-  beak.texWeight = 0.0;
-  beak.baseColor = [0.95, 0.60, 0.10, 1.0];
-  beak.matrix.setIdentity();
-  beak.matrix.translate(baseX + 0.58, 1.18, baseZ + 0.18);
-  beak.matrix.scale(0.18, 0.12, 0.18);
-  beak.render(gl, UNIFORMS, ATTRS);
-
-  // Eyes (two tiny white cubes)
-  const eye1 = new Cube();
-  eye1.texWeight = 0.0;
-  eye1.baseColor = [0.98, 0.98, 0.98, 1.0];
-  eye1.matrix.setIdentity();
-  eye1.matrix.translate(baseX + 0.48, 1.32, baseZ + 0.25);
-  eye1.matrix.scale(0.07, 0.07, 0.07);
-  eye1.render(gl, UNIFORMS, ATTRS);
-
-  const eye2 = new Cube();
-  eye2.texWeight = 0.0;
-  eye2.baseColor = [0.98, 0.98, 0.98, 1.0];
-  eye2.matrix.setIdentity();
-  eye2.matrix.translate(baseX + 0.68, 1.32, baseZ + 0.25);
-  eye2.matrix.scale(0.07, 0.07, 0.07);
-  eye2.render(gl, UNIFORMS, ATTRS);
-
-  // Feet (orange)
-  const foot1 = new Cube();
-  foot1.texWeight = 0.0;
-  foot1.baseColor = [0.95, 0.60, 0.10, 1.0];
-  foot1.matrix.setIdentity();
-  foot1.matrix.translate(baseX + 0.32, 0.0, baseZ + 0.18);
-  foot1.matrix.scale(0.30, 0.08, 0.25);
-  foot1.render(gl, UNIFORMS, ATTRS);
-
-  const foot2 = new Cube();
-  foot2.texWeight = 0.0;
-  foot2.baseColor = [0.95, 0.60, 0.10, 1.0];
-  foot2.matrix.setIdentity();
-  foot2.matrix.translate(baseX + 0.60, 0.0, baseZ + 0.18);
-  foot2.matrix.scale(0.30, 0.08, 0.25);
-  foot2.render(gl, UNIFORMS, ATTRS);
-
-  // Wings (dark gray) - optional little flair
-  const wing1 = new Cube();
-  wing1.texWeight = 0.0;
-  wing1.baseColor = [0.15, 0.15, 0.18, 1.0];
-  wing1.matrix.setIdentity();
-  wing1.matrix.translate(baseX + 0.10, 0.45, baseZ + 0.33);
-  wing1.matrix.scale(0.18, 0.45, 0.50);
-  wing1.render(gl, UNIFORMS, ATTRS);
-
-  const wing2 = new Cube();
-  wing2.texWeight = 0.0;
-  wing2.baseColor = [0.15, 0.15, 0.18, 1.0];
-  wing2.matrix.setIdentity();
-  wing2.matrix.translate(baseX + 1.00, 0.45, baseZ + 0.33);
-  wing2.matrix.scale(0.18, 0.45, 0.50);
-  wing2.render(gl, UNIFORMS, ATTRS);
+function onWindowResize() {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
 }
+
+
